@@ -1,0 +1,32 @@
+apiVersion: ax.io/v1alpha1
+kind: Task
+metadata:
+    name: conc3
+    atespace: default
+    creationTimestamp: 2026-09-27T15:54:39.770125622Z
+spec:
+    image: localhost:5001/ax-task-runner@sha256:594e20cb3e23a5961cf6c7c9cb40e06e670e43a2172534d17eccbf65f8b1ff94
+    command:
+        - python3
+        - -c
+        - |
+          import urllib.request, json, os, time
+          body = {"contents": [{"role": "user", "parts": [{"text": "Podaj jedna krotka ciekawostke o Sanoku po polsku, jedno zdanie."}]}]}
+          ans = "(brak)"
+          for i in range(5):
+              try:
+                  u = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=" + os.environ["GEMINI_API_KEY"]
+                  resp = json.loads(urllib.request.urlopen(urllib.request.Request(u, json.dumps(body).encode(), {"Content-Type": "application/json"}), timeout=60).read())
+                  ans = resp["candidates"][0]["content"]["parts"][0]["text"].strip()
+                  break
+              except Exception as e:
+                  print("CONC3_RETRY", i, e)
+                  time.sleep(5)
+          print("CONC3_ANSWER", ans[:200])
+          payload = json.dumps({"task": "conc3", "answer": ans}).encode()
+          r = urllib.request.Request("http://100.65.215.34:18080", data=payload, headers={"Content-Type": "application/json"})
+          print("CONC3_POST", urllib.request.urlopen(r, timeout=10).status)
+    env:
+        - name: GEMINI_API_KEY
+          value: [REDACTED]
+    debug: true

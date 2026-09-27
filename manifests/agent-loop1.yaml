@@ -1,0 +1,103 @@
+apiVersion: ax.io/v1alpha1
+kind: Task
+metadata:
+    name: agent-loop1
+    atespace: default
+    creationTimestamp: 2026-09-27T15:41:24.435009998Z
+spec:
+    image: localhost:5001/ax-task-runner@sha256:594e20cb3e23a5961cf6c7c9cb40e06e670e43a2172534d17eccbf65f8b1ff94
+    command:
+        - python3
+        - -c
+        - |
+          import urllib.request, urllib.error, json, datetime, os, time, re
+
+          USER_QUERY = ("Sprawdz aktualna temperature w Sanoku (Polska), sprawdz ile paczkomatow InPost "
+                        "dziala w Sanoku (kod 38-500), oblicz o ile procent ta liczba jest wieksza od 25, "
+                        "i podaj krotsza (2 zdaniowa) odpowiedz po polsku.")
+
+          TOOLS = [{
+              "function_declarations": [
+                  {"name": "get_weather",
+                   "description": "Aktualna temperatura (C) i wiatr (km/h) dla miasta w Polsce",
+                   "parameters": {"type": "OBJECT", "properties": {"city": {"type": "STRING"}}, "required": ["city"]}},
+                  {"name": "find_paczkomaty",
+                   "description": "Zwraca punkty InPost dla kodu pocztowego (lista name/status/location_247)",
+                   "parameters": {"type": "OBJECT", "properties": {"post_code": {"type": "STRING"}}, "required": ["post_code"]}},
+                  {"name": "calculate",
+                   "description": "Oblicza wyrazenie arytmetyczne, np. '(30-25)/25*100'",
+                   "parameters": {"type": "OBJECT", "properties": {"expression": {"type": "STRING"}}, "required": ["expression"]}},
+              ]
+          }]
+
+          def http_json(url, data=None, timeout=60):
+              req = urllib.request.Request(url, data=(json.dumps(data).encode() if data else None),
+                                           headers={"Content-Type": "application/json"})
+              return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+
+          def dispatch(name, args):
+              print("TOOL_CALL", name, json.dumps(args, ensure_ascii=False))
+              if name == "get_weather":
+                  g = http_json("https://geocoding-api.open-meteo.com/v1/search?name=" + args["city"] + "&count=1&language=pl")
+                  r = g["results"][0]
+                  w = http_json("https://api.open-meteo.com/v1/forecast?latitude=%f&longitude=%f&current=temperature_2m,wind_speed_10m" % (r["latitude"], r["longitude"]))
+                  c = w["current"]
+                  return {"city": r["name"], "temperature_c": c["temperature_2m"], "wind_kmh": c["wind_speed_10m"]}
+              if name == "find_paczkomaty":
+                  d = http_json("https://api-pl-points.easypack24.net/v1/points?type=parcel_locker&post_code=" + args["post_code"] + "&per_page=100&fields=name,status,location_247")
+                  return {"count": d["count"], "items": [{"name": i["name"], "status": i["status"], "h24": i.get("location_247")} for i in d["items"]][:40]}
+              if name == "calculate":
+                  expr = args["expression"]
+                  if not re.fullmatch(r"[0-9+\-*/().,% ]+", expr):
+                      return {"error": "invalid expression"}
+                  return {"result": eval(expr, {"__builtins__": {}}, {})}
+              return {"error": "unknown tool " + name}
+
+          def call_gemini(contents):
+              body = {"contents": contents, "tools": TOOLS}
+              last = None
+              for attempt in range(5):
+                  for model in ("gemini-flash-latest", "gemini-flash-lite-latest"):
+                      try:
+                          url = ("https://generativelanguage.googleapis.com/v1beta/models/" + model +
+                                 ":generateContent?key=" + os.environ["GEMINI_API_KEY"])
+                          return model, http_json(url, body, timeout=120)
+                      except urllib.error.HTTPError as e:
+                          last = e.code
+                          print("GEMINI_RETRY", attempt, model, "HTTP", e.code)
+                          time.sleep(8 * (attempt + 1))
+              raise RuntimeError("gemini failed after retries, last HTTP " + str(last))
+
+          contents = [{"role": "user", "parts": [{"text": USER_QUERY}]}]
+          used_models, tool_trace = set(), []
+          final = ""
+          for rnd in range(6):
+              model, resp = call_gemini(contents)
+              used_models.add(model)
+              cand = resp["candidates"][0]
+              parts = cand["content"]["parts"]
+              calls = [p["functionCall"] for p in parts if "functionCall" in p]
+              if cand.get("finishReason") == "STOP" and not calls:
+                  final = "".join(p.get("text", "") for p in parts).strip()
+                  break
+              contents.append({"role": "model", "parts": parts})
+              fr = []
+              for f in calls:
+                  out = dispatch(f["name"], dict(f.get("args") or {}))
+                  tool_trace.append(f["name"])
+                  fr.append({"functionResponse": {"name": f["name"], "response": {"result": json.dumps(out, ensure_ascii=False)}}})
+              contents.append({"role": "user", "parts": fr})
+          else:
+              final = "(limit rund osiagniety)"
+
+          print("PHASE_AGENT_DONE rounds_used:", rnd + 1, "tools:", tool_trace, "models:", sorted(used_models))
+          print("FINAL_ANSWER:", final[:500])
+          out = json.dumps({"task": "agent-loop1", "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                            "rounds": rnd + 1, "tool_trace": tool_trace, "models": sorted(used_models),
+                            "answer": final}, ensure_ascii=False).encode()
+          req2 = urllib.request.Request("http://100.65.215.34:18080", data=out, headers={"Content-Type": "application/json"})
+          print("PHASE_POST:", urllib.request.urlopen(req2, timeout=10).status)
+    env:
+        - name: GEMINI_API_KEY
+          value: [REDACTED]
+    debug: true

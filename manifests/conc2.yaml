@@ -1,0 +1,20 @@
+apiVersion: ax.io/v1alpha1
+kind: Task
+metadata:
+    name: conc2
+    atespace: default
+    creationTimestamp: 2026-09-27T15:54:06.235194077Z
+spec:
+    image: localhost:5001/ax-task-runner@sha256:594e20cb3e23a5961cf6c7c9cb40e06e670e43a2172534d17eccbf65f8b1ff94
+    command:
+        - python3
+        - -c
+        - |
+          import urllib.request, json
+          d = json.loads(urllib.request.urlopen("https://api-pl-points.easypack24.net/v1/points?type=parcel_locker&post_code=38-500&per_page=100&fields=name,status", timeout=30).read())
+          names = [i["name"] for i in d["items"] if i["status"] == "Operating"]
+          print("CONC2_COUNT", d["count"], "operating", len(names))
+          payload = json.dumps({"task": "conc2", "count": d["count"], "operating": len(names)}).encode()
+          r = urllib.request.Request("http://100.65.215.34:18080", data=payload, headers={"Content-Type": "application/json"})
+          print("CONC2_POST", urllib.request.urlopen(r, timeout=10).status)
+    debug: true

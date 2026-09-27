@@ -1,0 +1,22 @@
+apiVersion: ax.io/v1alpha1
+kind: Task
+metadata:
+    name: conc1
+    atespace: default
+    creationTimestamp: 2026-09-27T15:58:11.663395400Z
+spec:
+    image: localhost:5001/ax-task-runner@sha256:594e20cb3e23a5961cf6c7c9cb40e06e670e43a2172534d17eccbf65f8b1ff94
+    command:
+        - python3
+        - -c
+        - |
+          import urllib.request, json
+          out = {}
+          for city, lat, lon in [("Sanok", 49.5557, 22.2063), ("Krakow", 50.0647, 19.945), ("Gdansk", 54.352, 18.6466)]:
+              w = json.loads(urllib.request.urlopen("https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s&current=temperature_2m" % (lat, lon), timeout=30).read())
+              out[city] = w["current"]["temperature_2m"]
+          print("CONC1_DATA", json.dumps(out))
+          payload = json.dumps({"task": "conc1", "weather": out}).encode()
+          r = urllib.request.Request("http://100.65.215.34:18080", data=payload, headers={"Content-Type": "application/json"})
+          print("CONC1_POST", urllib.request.urlopen(r, timeout=10).status)
+    debug: true
