@@ -1,21 +1,21 @@
-# Test 1 — Pętla agentowa (Gemini function calling)
+# Test 1 — Agent loop (Gemini function calling)
 
-**Data:** 2026-09-27 · **Task:** `agent-loop1` · **Manifest:** `manifests/agent-loop1.yaml`
+**Date:** 2026-09-27 · **Task:** `agent-loop1` · **Manifest:** `manifests/agent-loop1.yaml`
 
-## Co testowaliśmy
-Czy w tasku AX da się uruchomić prawdziwą pętlę agentową: model sam wybiera narzędzia
-(function calling), iteruje i zatrzymuje się, gdy ma odpowiedź. Dotąd testowane taski
-były deterministyczne (3 fazowy job).
+## What we tested
+Whether a real agent loop can run inside an AX task: the model picks tools itself
+(function calling), iterates, and stops when it has the answer. Previous test tasks
+were deterministic (3-phase jobs).
 
-## Narzędzia udostępnione modelowi
+## Tools exposed to the model
 - `get_weather(city)` → open-meteo (geocoding + forecast)
 - `find_paczkomaty(postcode)` → easypack24 (InPost)
-- `calculate(expr)` → lokalny eval (bez sieci)
+- `calculate(expr)` → local eval (no network)
 
-## Wynik
-✅ E2E. 5 rund, model wywołał `get_weather(Sanok)` + `find_paczkomaty(38-500)` równolegle
-w jednej rundzie, potem 3× `calculate` doprecyzowując liczbę punktów (33 → 32 → 29 paczkomatów).
-Odpowiedź modelu: temperatura w Sanoku 18.9°C; dla kodu 38-500 działa 32 punktów InPost
-(29 automatów), co jest +28% względem 25 (progu z pytania).
+## Result
+✅ E2E. 5 rounds; the model called `get_weather(Sanok)` + `find_paczkomaty(38-500)` in parallel
+in one round, then 3× `calculate` refining the point count (33 → 32 → 29 lockers).
+Model answer: temperature in Sanok 18.9°C; for postcode 38-500, 32 InPost points operate
+(29 machines), i.e. +28% over 25 (the threshold from the question).
 
-Retry+fallback znowu się przydał: `gemini-flash-latest` 2× 503 (high demand) → `gemini-flash-lite-latest`.
+Retry+fallback proved useful again: `gemini-flash-latest` 2× 503 (high demand) → `gemini-flash-lite-latest`.

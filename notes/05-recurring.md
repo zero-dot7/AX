@@ -1,16 +1,16 @@
-# Test 5 — Task cykliczny (cron1)
+# Test 5 — Recurring task (cron1)
 
-**Cel:** czy substrat wspiera wykonywanie cykliczne?
+**Goal:** does the substrate support recurring execution?
 
-## Ustalenie
-**Brak natywnego cron/schedule** w AX (sprawdzone: CRD schema, `ax --help` — tylko apply/get/describe/watch/ssh/suspend/resume/delete). Task to jednorazowy, immutable runnable.
+## Finding
+**No native cron/schedule** in AX (checked: CRD schema, `ax --help` — only apply/get/describe/watch/ssh/suspend/resume/delete). A task is a one-shot, immutable runnable.
 
-## Test (wzorzec zastępczy)
-Długowieczny task z pętlą wewnętrzną: 3 cykle POST co 20 s.
+## Test (substitute pattern)
+A long-running task with an internal loop: 3 POST cycles every 20 s.
 
-## Wynik
-3/3 dostarczone (ts 1790526623 → 643 → 663, dokładnie co 20 s), po zakończeniu pętli task zostaje w Running/idle (nie usuwa się sam).
+## Result
+3/3 delivered (ts 1790526623 → 643 → 663, exactly every 20 s); after the loop ends the task stays Running/idle (it does not delete itself).
 
-## Lekcje
-- Cykliczność = task z pętlą wewnętrzną + stan w /workspace (dla resumability), **albo** zewnętrzny scheduler (system cron na hoście) sterujący `ax apply/resume`
-- Po wyjściu z pętli task pozostaje Running/idle — bez auto-delete; dla jednorazowych tasków trzeba kasować ręcznie
+## Lessons
+- Recurrence = a task with an internal loop + state in /workspace (for resumability), **or** an external scheduler (host cron) driving `ax apply/resume`
+- After the loop exits the task remains Running/idle — no auto-delete; one-shot tasks must be deleted manually
