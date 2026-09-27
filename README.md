@@ -14,7 +14,9 @@ uruchomionym na serv2uk (k3s, gVisor, worker-pool 2-podowy).
 |---|------|--------|------|
 | 1 | Pętla agentowa (Gemini function calling) | ✅ 2026-09-27 | `notes/01-agent-loop.md` |
 | 2 | Współbieżność (3 taski, różne API) | ✅ 2026-09-27 | `notes/02-concurrency.md` |
-| 3 | Checkpoint/suspend-resume | w toku | — |
+| 3 | Checkpoint/suspend-resume | ✅ 2026-09-27 | `notes/03-checkpoint-suspend-resume.md` — `/workspace` jedyny trwały; `/tmp` ulotny |
+| 4 | Izolacja atespace'ów | ✅ 2026-09-27 | `notes/04-atespace-isolation.md` — pełna izolacja, brak polityki = fail-closed |
+| 5 | Task cykliczny | ✅ 2026-09-27 | `notes/05-recurring.md` — brak natywnego cron; pętla wewn. lub zewn. scheduler |
 
 ## Zasady
 - **Żadnych sekretów w repo** — klucze API (Gemini), tokeny, certyfikaty wycięte/zastąpione placeholderem `REDACTED`.
