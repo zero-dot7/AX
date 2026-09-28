@@ -1,0 +1,19 @@
+[Unit]
+Description=axbot — Telegram control plane for AX
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hermes
+WorkingDirectory=/home/hermes/axbot
+Environment=AX_SERVER=http://127.0.0.1:8494
+Environment=KUBECONFIG=/home/hermes/.kube/config
+Environment=HOME=/home/hermes
+EnvironmentFile=/etc/axbot.env
+ExecStart=/usr/bin/python3 /home/hermes/axbot/src/axbot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
