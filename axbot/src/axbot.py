@@ -184,6 +184,13 @@ def handle_update(upd, ctx):
     chat = str(msg.get("chat", {}).get("id", ""))
     text = msg.get("text", "")
     frm = str(msg.get("from", {}).get("id", ""))
+    if not ctx.cfg["allowed"]:
+        # bootstrap mode: empty allowlist → first sender becomes admin
+        ctx.cfg["chat"] = chat
+        ctx.cfg["allowed"] = [frm]
+        ctx.state["admin"] = frm
+        state_mod.save(ctx.cfg["state_path"], ctx.state)
+        ctx.reply(f"bootstrap: you ({frm}) are now admin. /help for commands.")
     if frm not in ctx.cfg["allowed"]:
         return  # silence for strangers
     if not text.startswith("/"):
@@ -220,10 +227,13 @@ def main():
     token = os.environ.get("TELEGRAM_TOKEN", "")
     allowed = [u.strip() for u in
                os.environ.get("ALLOWED_USER_IDS", "").split(",") if u.strip()]
+    # allowlist persists across restarts: seeded from env, then from state
     state_path = os.path.expanduser(
         os.environ.get("AXBOT_STATE", "~/.axbot/state.json"))
     os.makedirs(os.path.dirname(state_path), exist_ok=True)
     st = state_mod.load(state_path)
+    if st.get("admin"):
+        allowed = [st["admin"]]
     bot = telegram.Bot(token)
     watchers = Watchers(bot, axcli, st, state_path)
     watchers.rebuild()
