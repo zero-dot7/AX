@@ -14,6 +14,8 @@ import state as state_mod  # noqa: E402
 import telegram  # noqa: E402
 from watcher import Watchers  # noqa: E402
 
+import yaml  # noqa: E402  (stdlib-adjacent; present on serv2uk)
+
 HELP = """/help — this list
 /status — stack health
 /tasks — ax get tasks
@@ -154,11 +156,88 @@ def cmd_policy(ctx, args):
     ctx.reply(kube.egress_show(parts[0], atespace))
 
 
+def cmd_apply(ctx, args):
+    """Called with the raw manifest text when a document arrives."""
+    with MUT_LOCK:
+        try:
+            doc = yaml.safe_load(args)
+        except yaml.YAMLError as e:
+            return ctx.reply(f"/apply: invalid YAML — {str(e)[:300]}")
+        if not isinstance(doc, dict) or "apiVersion" not in doc:
+            preview = args.strip()[:200].replace("\n", " ⏎ ")
+            print(f"/apply reject: type={type(doc).__name__} "
+                  f"len={len(args)} head={args[:300]!r}", flush=True)
+            return ctx.reply(
+                f"/apply: attachment must be an AX manifest "
+                f"(apiVersion/kind/metadata)\nreceived ({len(args)} chars, "
+                f"{type(doc).__name__}): {preview}")
+        kind = doc.get("kind", "")
+        name = doc.get("metadata", {}).get("name", "?")
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml",
+                                         delete=False) as f:
+            f.write(args)
+            path = f.name
+        r = axcli.run(["apply", "-f", path])
+        if r.rc != 0 and "already exists" in str(r) and "immutable" in str(r):
+            # AX tasks are immutable — delete the old one and re-apply
+            name0 = doc.get("metadata", {}).get("name", "")
+            if name0:
+                dr = axcli.run(["delete", "task", name0])
+                ctx.reply(f"♻️ task '{name0}' existed (immutable) — deleting…\n"
+                          f"{str(dr.out)[:200]}")
+                r = axcli.run(["apply", "-f", path])
+        if r.rc != 0:
+            return ctx.reply(f"/apply: apply FAILED\n{str(r)[:800]}")
+        reply = [f"applied {kind} '{name}'", str(r.out)[:300]]
+        if kind.lower() == "task":
+            # egress policy: hostnames/cidrs from the manifest env or URLs
+            rules = _extract_egress_rules(doc)
+            if rules:
+                with open(path, "w") as f:
+                    yaml.safe_dump({"rules": rules}, f)
+                pol = kube.egress_apply(name, "default", path)
+                reply.append(f"egress: {pol[:200]}")
+            rr = axcli.run(["resume", name])
+            reply.append(f"resume: rc={rr.rc} {str(rr.out)[:100]}")
+            # watch the task — result file returns to this chat on finish
+            try:
+                ctx.watchers.watch(name, ctx.cfg["chat"])
+                reply.append(f"👁 watching {name} — result will be "
+                             f"sent here as a file")
+            except Exception as e:
+                reply.append(f"watch failed: {e}")
+        ctx.reply("\n".join(reply))
+
+
+def _extract_egress_rules(doc):
+    """Derive egress hostname rules from a Task manifest.
+
+    Scans the command/args/env for https:// URLs and bare API hostnames,
+    emits one hostname-pattern rule per distinct host.
+    """
+    import re
+    text = yaml.safe_dump(doc)
+    hosts, cidrs = set(), set()
+    for m in re.finditer(r"https?://([A-Za-z0-9.\-]+)", text):
+        h = m.group(1)
+        if re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", h):
+            cidrs.add(f"{h}/32")
+        else:
+            hosts.add(h)
+    rules = [{"hostnames": {"patterns": [h]}} for h in sorted(hosts)]
+    rules += [{"cidrs": {"cidrs": [c]}} for c in sorted(cidrs)]
+    return rules
+
+
 COMMANDS = {
     "help": lambda c, a: c.reply(HELP),
     "status": cmd_status,
     "tasks": cmd_tasks,
     "task": cmd_task,
+    "apply": lambda c, a: c.reply(
+        "send a .yaml manifest as an attachment "
+        "(with caption /apply or none) to apply it"),
     "resume": cmd_resume,
     "suspend": cmd_suspend,
     "delete": cmd_delete,
@@ -182,7 +261,7 @@ def route(text):
 def handle_update(upd, ctx):
     msg = upd.get("message") or {}
     chat = str(msg.get("chat", {}).get("id", ""))
-    text = msg.get("text", "")
+    text = msg.get("text", "") or msg.get("caption", "") or ""
     frm = str(msg.get("from", {}).get("id", ""))
     if not ctx.cfg["allowed"]:
         # bootstrap mode: empty allowlist → first sender becomes admin
@@ -193,12 +272,15 @@ def handle_update(upd, ctx):
         ctx.reply(f"bootstrap: you ({frm}) are now admin. /help for commands.")
     if frm not in ctx.cfg["allowed"]:
         return  # silence for strangers
+    ctx.cfg["chat"] = chat
+    doc = msg.get("document")
+    if doc:
+        return _handle_document(ctx, doc)
     if not text.startswith("/"):
         return
     cmd, args = route(text)
     if not cmd:
         return
-    ctx.cfg["chat"] = chat
     fn = COMMANDS.get(cmd)
     if not fn:
         return ctx.reply(f"unknown /{cmd} — try /help")
@@ -206,6 +288,22 @@ def handle_update(upd, ctx):
         fn(ctx, args)
     except Exception as e:
         ctx.reply(f"/{cmd} failed: {e}")
+
+
+def _handle_document(ctx, doc):
+    """Apply a YAML attachment (any caption)."""
+    fname = doc.get("file_name", "attachment")
+    ctx.reply(f"📥 {fname}: downloading…")
+    try:
+        _, data = ctx.bot.get_file(doc["file_id"])
+    except (telegram.BotError, KeyError) as e:
+        return ctx.reply(f"download failed: {e}")
+    if not fname.lower().endswith((".yaml", ".yml")):
+        return ctx.reply("only .yaml/.yml attachments are supported")
+    try:
+        cmd_apply(ctx, data.decode("utf-8", "replace"))
+    except Exception as e:
+        ctx.reply(f"/apply failed: {e}")
 
 
 def selftest():

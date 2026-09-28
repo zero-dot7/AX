@@ -51,23 +51,19 @@ def task_logs(task, pod, lines=50):
 
 
 def egress_show(actor, atespace):
-    rc, out, err = _run(["kubectl-ate", "get", "egresspolicies",
-                         "-n", atespace, "-o", "json"])
+    rc, out, err = _run(["kubectl-ate", "get", "egress-policy", actor,
+                         "-a", atespace, "-o", "json"])
     if rc != 0:
-        return f"policy error: {err.strip() or out.strip()}"
-    try:
-        items = json.loads(out).get("items", [])
-    except ValueError:
-        return "(policy: non-JSON output)"
-    rel = [i for i in items if actor in json.dumps(i)]
-    if not rel:
-        return f"(no egress policy for actor '{actor}')"
-    return json.dumps(rel, indent=1)
+        return f"policy error: {err.strip() or out.strip()}" \
+            or f"(no egress policy for actor '{actor}')"
+    return out.strip() or "(empty)"
 
 
 def egress_apply(actor, atespace, yaml_path):
-    rc, out, err = _run(["kubectl-ate", "apply", "-n", atespace,
-                         "-f", yaml_path])
+    # create fails if a policy already exists → delete first for idempotency
+    _run(["kubectl-ate", "delete", "egress-policy", actor, "-a", atespace])
+    rc, out, err = _run(["kubectl-ate", "create", "egress-policy", actor,
+                         "-a", atespace, "-f", yaml_path])
     if rc != 0:
         return f"egress apply FAILED: {err.strip() or out.strip()}"
     return out.strip() or "applied"
