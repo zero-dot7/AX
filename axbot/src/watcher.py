@@ -1,6 +1,24 @@
 """Phase-change watchers — one thread per watched task. B9, B10."""
+import glob
+import json
+import os
 import threading
 import time
+
+DATA_DIR = os.path.expanduser("~/ax-test/data")
+
+
+def latest_result(task):
+    """Newest receiver result file for a task, or None.
+
+    Files are named <task>-<YYYYMMDD>-<HHMMSS>.json
+    """
+    try:
+        files = sorted(glob.glob(os.path.join(
+            DATA_DIR, f"{task}-*.json")), key=os.path.getmtime)
+        return files[-1] if files else None
+    except OSError:
+        return None
 
 
 class Watchers:
@@ -25,7 +43,8 @@ class Watchers:
 
     def watch(self, task, chat):
         with self._lock:
-            self.state["watches"][task] = {"chat": chat, "phase": None}
+            self.state["watches"][task] = {"chat": chat, "phase": None,
+                                           "since": time.time()}
             self._save()
             if task not in self._threads or \
                     not self._threads[task].is_alive():
@@ -65,6 +84,40 @@ class Watchers:
                 self._send(meta["chat"], f"👁 {task}: {meta['phase']} → "
                                          f"{phase}")
                 if phase.lower() in ("failed", "succeeded", "completed"):
+                    if phase.lower() != "failed":
+                        self._send_result(meta["chat"], task)
+                    with self._lock:
+                        self.state["watches"].pop(task, None)
+                        self._save()
+                    return
+            # result-file trigger: a newer file in ~/ax-test/data means the
+            # run finished even if the Task phase is stuck at Running
+            path = latest_result(task)
+            if path and path != meta.get("sent_file") and \
+                    os.path.getmtime(path) > meta.get("since", 0):
+                time.sleep(2)  # let the receiver finish writing
+                path2 = latest_result(task)
+                if path2 == path:
+                    self._send_result(meta["chat"], task)
+                    # auto-cleanup: one-shot tasks stay Running forever and
+                    # the substrate controller re-resumes suspended ones, so
+                    # delete the finished task to free the worker slot
+                    print(f"watch: auto-deleting {task}...", flush=True)
+                    try:
+                        dr = self.axcli.run(["delete", "task", task])
+                    except Exception as e:  # noqa: BLE001
+                        print(f"watch: delete call raised: {e}", flush=True)
+                        dr = None
+                    ok = dr is not None and dr.rc == 0
+                    print(f"watch: delete rc="
+                          f"{getattr(dr, 'rc', '?')}", flush=True)
+                    if ok:
+                        self._send(meta["chat"],
+                                   f"🗑 {task}: done — task deleted")
+                    else:
+                        self._send(meta["chat"],
+                                   f"⚠️ {task}: delete failed — "
+                                   f"{str(getattr(dr, 'out', 'raised'))[:200]}")
                     with self._lock:
                         self.state["watches"].pop(task, None)
                         self._save()
@@ -80,6 +133,29 @@ class Watchers:
             self.bot.send_message(chat, text)
         except Exception:
             pass
+
+    def _send_result(self, chat, task):
+        """Send the newest receiver result as a Telegram document."""
+        path = latest_result(task)
+        if not path:
+            self._send(chat, f"📄 {task}: no result file found in "
+                             f"{DATA_DIR}")
+            return
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+            caption = ""
+            try:
+                with open(path) as f:
+                    caption = json.load(f).get("md", "")[:1000] or ""
+            except Exception:
+                pass
+            self.bot.send_document(chat, os.path.basename(path), data,
+                                   caption=f"📄 {task} result\n\n{caption}")
+            print(f"result sent: {task} → chat {chat} "
+                  f"({os.path.basename(path)})", flush=True)
+        except Exception as e:
+            self._send(chat, f"📄 {task}: result upload failed — {e}")
 
     def rebuild(self):
         for task in list(self.state["watches"]):
