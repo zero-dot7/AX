@@ -62,6 +62,61 @@ class Bot:
                            "allowed_updates": ["message"]},
                           timeout=timeout + 10)
 
+    def get_file(self, file_id, max_bytes=256 * 1024):
+        """Download a file attachment; returns (filename, content bytes)."""
+        info = self._call("getFile", {"file_id": file_id}, 30)
+        path = info.get("file_path", "")
+        if not path:
+            raise BotError("telegram getFile: no file_path")
+        if not path.startswith("file/") and "/" in path:
+            # only allow the official file CDN host
+            from urllib.parse import urlparse
+            host = urlparse(path).netloc if "://" in path else ""
+            if host and host != "api.telegram.org":
+                raise BotError("telegram getFile: unexpected host")
+        url = f"https://api.telegram.org/file/bot{self.token}/{path}"
+        try:
+            with urllib.request.urlopen(url, timeout=60) as r:
+                data = r.read(max_bytes + 1)
+        except (urllib.error.URLError, OSError) as e:
+            raise BotError(f"telegram file download: {e}") from None
+        if len(data) > max_bytes:
+            raise BotError("attachment too large (max 256 KB)")
+        name = path.rsplit("/", 1)[-1]
+        return name, data
+
+    def send_document(self, chat_id, filename, data, caption=""):
+        """Upload a file via multipart/form-data (stdlib only)."""
+        bnd = f"axbot{int(time.time() * 1000)}"
+        parts = []
+        for name, val in (("chat_id", str(chat_id)),
+                          ("caption", caption[:1000])):
+            parts.append(
+                f"--{bnd}\r\nContent-Disposition: form-data; "
+                f'name="{name}"\r\n\r\n{val}\r\n'.encode())
+        parts.append(
+            f"--{bnd}\r\nContent-Disposition: form-data; "
+            f'name="document"; filename="{filename}"\r\n'
+            f"Content-Type: application/octet-stream\r\n\r\n".encode())
+        parts.append(data)
+        parts.append(f"\r\n--{bnd}--\r\n".encode())
+        body = b"".join(parts)
+        url = f"https://api.telegram.org/bot{self.token}/sendDocument"
+        req = urllib.request.Request(
+            url, data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={bnd}"})
+        try:
+            with urllib.request.urlopen(req, timeout=90) as r:
+                resp = json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            raise BotError(f"telegram sendDocument: HTTP {e.code}") from None
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            raise BotError(f"telegram sendDocument: {e}") from None
+        if not resp.get("ok"):
+            raise BotError(
+                f"telegram sendDocument: {resp.get('description')}")
+        return resp["result"]
+
     def send_message(self, chat_id, text):
         for chunk in split_message(text):
             for attempt in range(2):
