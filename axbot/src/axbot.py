@@ -1,0 +1,258 @@
+#!/usr/bin/env python3
+"""axbot — Telegram control plane for AX. Entry point + command router."""
+import os
+import secrets
+import sys
+import threading
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import axcli  # noqa: E402
+import kube  # noqa: E402
+import state as state_mod  # noqa: E402
+import telegram  # noqa: E402
+from watcher import Watchers  # noqa: E402
+
+HELP = """/help — this list
+/status — stack health
+/tasks — ax get tasks
+/task <name> — phase + conditions (real errors)
+/apply — reply with .yaml attachment → apply + resume + egress
+/resume <name> | /suspend <name>
+/delete <name> — confirmation required
+/logs <name> [lines] — task logs via kubectl
+/policy <actor> [atespace]
+/watch <name> | /unwatch <name> — push on phase changes"""
+
+MUT_LOCK = threading.Lock()  # B7
+
+
+class Ctx:
+    def __init__(self, bot, state, watchers, cfg):
+        self.bot, self.state, self.watchers, self.cfg = \
+            bot, state, watchers, cfg
+        self.reply = lambda text: bot.send_message(cfg["chat"], text)
+
+
+def cmd_status(ctx, args):
+    try:
+        r = axcli.run(["get", "tasks"])
+        ok = r.rc == 0
+        rows = [ln for ln in r.out.strip().split("\n")
+                if ln.strip()][1:] if ok else []
+        ctx.reply(f"ax-server: {'UP' if ok else 'DOWN (' + str(r)[:200] + ')'}"
+                  f"\ntasks: {len(rows)}"
+                  f"\nwatchers: {len(ctx.state['watches'])}")
+    except Exception as e:
+        ctx.reply(f"status error: {e}")
+
+
+def cmd_tasks(ctx, args):
+    r = axcli.run(["get", "tasks"])
+    text = kube.cap_output(r.out.strip().split("\n")) if r.rc == 0 \
+        else f"error: {str(r)[:300]}"
+    ctx.reply(text or "(no tasks)")
+
+
+def cmd_task(ctx, args):
+    if not args:
+        return ctx.reply("usage: /task <name>")
+    r = axcli.run(["get", "task", args])
+    if r.rc != 0:
+        return ctx.reply(f"error: {str(r)[:300]}")
+    lines = r.out.strip().split("\n")
+    keep, conds = [], False
+    for ln in lines:
+        low = ln.lower()
+        if "conditions" in low:
+            conds = True
+        if conds or low.startswith(("phase", "name", "actor", "workerip",
+                                    "age")):
+            keep.append(ln)
+    ctx.reply(kube.cap_output(keep) or str(r)[:2000])
+
+
+def cmd_logs(ctx, args):
+    if not args:
+        return ctx.reply("usage: /logs <name> [lines]")
+    n = 50
+    parts = args.split()
+    if len(parts) > 1 and parts[1].isdigit():
+        n = min(int(parts[1]), 200)
+    ctx.reply("(resolving pod…)")
+    r = axcli.run(["get", "task", parts[0]])
+    pod = _pod_from_status(r.out)
+    if not pod:
+        return ctx.reply("could not resolve worker pod from task status")
+    ctx.reply(kube.task_logs(parts[0], pod, n))
+
+
+def _pod_from_status(out):
+    for ln in out.split("\n"):
+        if "workerip" in ln.lower() or "worker-ip" in ln.lower():
+            val = ln.split(":", 1)[-1].strip() if ":" in ln else ""
+            val = val.split()[0] if val else ""
+            if val:
+                return "ax-pool-" + val
+    return None
+
+
+def cmd_resume(ctx, args):
+    if not args:
+        return ctx.reply("usage: /resume <name>")
+    with MUT_LOCK:
+        r = axcli.run(["resume", args])
+        ctx.reply(f"resume {args}: rc={r.rc}\n{str(r)[:500]}")
+
+
+def cmd_suspend(ctx, args):
+    if not args:
+        return ctx.reply("usage: /suspend <name>")
+    with MUT_LOCK:
+        r = axcli.run(["suspend", args])
+        ctx.reply(f"suspend {args}: rc={r.rc}\n{str(r)[:500]}")
+
+
+def cmd_delete(ctx, args):
+    if not args:
+        return ctx.reply("usage: /delete <name>")
+    with MUT_LOCK:
+        conf = ctx.state["confirms"].get(args)
+        if conf and conf.get("action") == "delete" \
+                and conf.get("exp", 0) > time.time():
+            del ctx.state["confirms"][args]
+            state_mod.save(ctx.cfg["state_path"], ctx.state)
+            r = axcli.run(["delete", "task", args])
+            return ctx.reply(f"deleted {args}: rc={r.rc}\n{str(r)[:300]}")
+        ctx.state["confirms"][args] = {"action": "delete",
+                                       "exp": time.time() + 60}
+        state_mod.save(ctx.cfg["state_path"], ctx.state)
+        ctx.reply(f"⚠ delete {args}? Run /delete {args} again within "
+                  f"60 s to confirm.")
+
+
+def cmd_watch(ctx, args):
+    if not args:
+        return ctx.reply("usage: /watch <name>")
+    ctx.watchers.watch(args, ctx.cfg["chat"])
+    ctx.reply(f"👁 watching {args} (phase changes → this chat)")
+
+
+def cmd_unwatch(ctx, args):
+    if not args:
+        return ctx.reply("usage: /unwatch <name>")
+    ctx.watchers.unwatch(args)
+    ctx.reply(f"stopped watching {args}")
+
+
+def cmd_policy(ctx, args):
+    if not args:
+        return ctx.reply("usage: /policy <actor> [atespace]")
+    parts = args.split()
+    atespace = parts[1] if len(parts) > 1 else "default"
+    ctx.reply(kube.egress_show(parts[0], atespace))
+
+
+COMMANDS = {
+    "help": lambda c, a: c.reply(HELP),
+    "status": cmd_status,
+    "tasks": cmd_tasks,
+    "task": cmd_task,
+    "resume": cmd_resume,
+    "suspend": cmd_suspend,
+    "delete": cmd_delete,
+    "logs": cmd_logs,
+    "policy": cmd_policy,
+    "watch": cmd_watch,
+    "unwatch": cmd_unwatch,
+}
+
+
+def route(text):
+    text = text.strip()
+    if not text.startswith("/"):
+        return None, None
+    parts = text[1:].split(None, 1)
+    cmd = parts[0].split("@")[0].lower()
+    args = parts[1].strip() if len(parts) > 1 else ""
+    return cmd, args
+
+
+def handle_update(upd, ctx):
+    msg = upd.get("message") or {}
+    chat = str(msg.get("chat", {}).get("id", ""))
+    text = msg.get("text", "")
+    frm = str(msg.get("from", {}).get("id", ""))
+    if not ctx.cfg["allowed"]:
+        # bootstrap mode: empty allowlist → first sender becomes admin
+        ctx.cfg["chat"] = chat
+        ctx.cfg["allowed"] = [frm]
+        ctx.state["admin"] = frm
+        state_mod.save(ctx.cfg["state_path"], ctx.state)
+        ctx.reply(f"bootstrap: you ({frm}) are now admin. /help for commands.")
+    if frm not in ctx.cfg["allowed"]:
+        return  # silence for strangers
+    if not text.startswith("/"):
+        return
+    cmd, args = route(text)
+    if not cmd:
+        return
+    ctx.cfg["chat"] = chat
+    fn = COMMANDS.get(cmd)
+    if not fn:
+        return ctx.reply(f"unknown /{cmd} — try /help")
+    try:
+        fn(ctx, args)
+    except Exception as e:
+        ctx.reply(f"/{cmd} failed: {e}")
+
+
+def selftest():
+    print("axbot selftest — no token needed")
+    r = axcli.run(["get", "tasks"])
+    print(f"ax get tasks: rc={r.rc}\n{str(r)[:500]}")
+    print("usage-detector:", "ENV OK" if not isinstance(r, str) else r)
+    print("state roundtrip:", "OK" if state_mod.load("/nonexistent")
+          == state_mod.load("/nonexistent2") else "FAIL")
+    chunks = telegram.split_message("x" * 9000)
+    print(f"split 9000 chars → {len(chunks)} chunks, "
+          f"max={max(len(c) for c in chunks)}")
+    return 0
+
+
+def main():
+    if "--selftest" in sys.argv:
+        return selftest()
+    token = os.environ.get("TELEGRAM_TOKEN", "")
+    allowed = [u.strip() for u in
+               os.environ.get("ALLOWED_USER_IDS", "").split(",") if u.strip()]
+    # allowlist persists across restarts: seeded from env, then from state
+    state_path = os.path.expanduser(
+        os.environ.get("AXBOT_STATE", "~/.axbot/state.json"))
+    os.makedirs(os.path.dirname(state_path), exist_ok=True)
+    st = state_mod.load(state_path)
+    if st.get("admin"):
+        allowed = [st["admin"]]
+    bot = telegram.Bot(token)
+    watchers = Watchers(bot, axcli, st, state_path)
+    watchers.rebuild()
+    ctx = Ctx(bot, st, watchers,
+              {"allowed": allowed, "chat": None, "state_path": state_path})
+    print("polling started", flush=True)
+    while True:
+        try:
+            updates = bot.get_updates(offset=st["offset"])
+        except telegram.BotError as e:
+            print(f"poll error: {e}", flush=True)
+            time.sleep(5)
+            continue
+        for u in updates:
+            st["offset"] = max(st["offset"], u["update_id"] + 1)
+            state_mod.save(state_path, st)
+            handle_update(u, ctx)
+        time.sleep(0.5)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

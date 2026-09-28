@@ -5,7 +5,6 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=hermes
 WorkingDirectory=/home/hermes/axbot
 Environment=AX_SERVER=http://127.0.0.1:8494
 Environment=KUBECONFIG=/home/hermes/.kube/config
@@ -16,4 +15,4 @@ Restart=always
 RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
