@@ -76,4 +76,32 @@ PYTHONPATH=axbot/src python3 axbot/tests/live/axbot_offline_tests.py  # needs: p
 scp tests/live/*.py serv2uk:/tmp/
 ssh serv2uk 'cd ~/axbot && setsid nohup python3 /tmp/axbot_live_tests.py > /tmp/live-run.log 2>&1 < /dev/null &'
 tail -f /tmp/live-run.log
+
+# ax-sentinel offline (any machine with the repo)
+PYTHONPATH=ax-sentinel python3 ax-sentinel/tests/sentinel_offline_tests.py
+
+# ax-sentinel live cross-server dispatch (on serv, from the repo root)
+python3 ax-sentinel/sentinel.py run
 ```
+
+## ax-sentinel cross-server runs (serv → AX on serv2uk)
+
+- **sentinel-0 (probe, 2026-09-29)**: minimal task dispatched from serv over
+  ssh — verified the full chain (apply/resume/egress via ssh, runner has
+  git 2.47.3 / python 3.12, receiver POST works). Found: runner has NO
+  pyyaml (task must pip-install it); egress policy requires the actor to
+  exist → apply → resume → egress → resume.
+- **sentinel-1 (2026-09-29)**: first full run. Two bugs found and fixed:
+  (a) embedding the repo tarball base64 in the task command produced a
+  220 KB manifest → `actor template not found` on apply; fix: serve the
+  tarball over Tailscale HTTP (:18081 on serv2uk, `setsid nohup python3 -m
+  http.server`). (b) `yaml.safe_dump(doc, f)` wrote 0-byte files; use
+  `f.write(yaml.safe_dump(doc))`. Intermediate manual delete+re-apply (for
+  `spec.debug`) wiped the egress policy — re-apply egress after any
+  delete+apply cycle. First genuine axrepo result did arrive: offline
+  21 pass / 0 fail, secret scan CLEAN — but the poll timed out at 900 s
+  (pip takes ~15 min under throttled egress) and the pass-count regex
+  missed the `N pass / M fail` format. Fixes: POLL_TIMEOUT 1800 s,
+  regex, stale-result guard (`ts > dispatch_time`).
+- **sentinel-2 (2026-09-29, final)**: clean end-to-end run of both tasks
+  from serv with all fixes — see `out/run.log` / digest below.

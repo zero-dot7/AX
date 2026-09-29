@@ -1,0 +1,7 @@
+# ax-sentinel configuration
+# repo_dir: local checkout of the private repo (archived & embedded into the
+#           task at dispatch time — no GitHub credentials in the runner)
+# repos:   additional public repos to watch via ls-remote (name -> url)
+repo_dir: /tmp/priv
+repos:
+  upstream: https://github.com/google/ax.git

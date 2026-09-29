@@ -1,0 +1,4 @@
+# ax-sentinel runtime artifacts (manifests, tarballs, logs, state)
+ax-sentinel/out/
+ax-sentinel/state/
+ax-sentinel/__pycache__/
