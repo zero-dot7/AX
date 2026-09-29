@@ -48,11 +48,29 @@ Last verified: 29/09/2026 on serv2uk (k3s, substrate v0.2.0-9-gc7b54699).
     starts. Next step if revisited: `spec.debug: true` on the manifest, or
     close as blocked-upstream.
 
+## Run #7 — 2026-09-29: FULL GREEN (27/27)
+
+- Same substrate as #6/#6b (v0.2.0-9-gc7b54699, no reboot since Sep 26),
+  same axbot code (post-watcher-fix), same driver.
+- Result: offline 21/21 (from repo, `PYTHONPATH=axbot/src`), live 27/0 —
+  including live-calc, which passed in ~4 min after one handled
+  egress-race retry (`re-applied live-calc (egress race retry)` is the
+  driver's built-in retry, logged as info, not a failure).
+- Conclusion: upstream #346 is an **intermittent race, not a hard
+  blocker**. On identical code+substrate it failed 4/4 in run #6b and
+  passed in run #7. Treat #6b-style hangs as retry-able: re-apply the
+  task before escalating (the driver does this automatically once;
+  manual escalation = delete task + re-apply, then `spec.debug: true`).
+- Evidence: `live-run7.log`; journal shows result→deliver→auto-delete
+  for all three scenarios.
+
 ## Re-running
 
 ```bash
 # offline (any machine with the repo)
-PYTHONPATH=src python3 tests/live/axbot_offline_tests.py  # needs: pip install pyyaml
+PYTHONPATH=axbot/src python3 axbot/tests/live/axbot_offline_tests.py  # needs: pip install pyyaml
+# (repo layout: sources under axbot/src, tests under axbot/tests/live —
+#  run from the repo root with PYTHONPATH=axbot/src)
 
 # live (on serv2uk, as hermes)
 scp tests/live/*.py serv2uk:/tmp/

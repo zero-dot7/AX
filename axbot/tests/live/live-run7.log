@@ -1,0 +1,39 @@
+LIVE live-api (/tmp/t-api.py)
+  ok: gen manifest emitted
+  ok: manifest kind:Task
+  ok: apply accepted
+  ok: bot active after start
+VERIFY live-api
+  ok: result file in data/
+  ok: result has md
+    md: Paczkomat ?: Operating
+  ok: watch removed (auto-delete done)
+  ok: task auto-deleted
+  ok: journal: result sent to chat
+LIVE live-calc (/tmp/t-calc.py)
+  ok: gen manifest emitted
+  ok: manifest kind:Task
+  ok: apply accepted
+  ok: bot active after start
+VERIFY live-calc
+    re-applied live-calc (egress race retry)
+  ok: result file in data/
+  ok: result has md
+    md: fib(30)=514229; liczb pierwszych <200: 46 (max 199)
+  ok: watch removed (auto-delete done)
+  ok: task auto-deleted
+  ok: journal: result sent to chat
+LIVE live-multi (/tmp/t-multi.py)
+  ok: gen manifest emitted
+  ok: manifest kind:Task
+  ok: apply accepted
+  ok: bot active after start
+VERIFY live-multi
+  ok: result file in data/
+  ok: result has md
+    md: Warszawa 18.7 C; paczkomat SAN01BAPP: Operating
+  ok: watch removed (auto-delete done)
+  ok: task auto-deleted
+  ok: journal: result sent to chat
+
+==== LIVE SUITE: 27 pass / 0 fail ====
