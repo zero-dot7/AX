@@ -1,0 +1,53 @@
+LIVE live-api (/tmp/t-api.py)
+  ok: gen manifest emitted
+  ok: manifest kind:Task
+  ok: apply accepted
+  ok: bot active after start
+VERIFY live-api
+  ok: result file in data/
+  ok: result has md
+    md: Paczkomat ?: Operating
+  ok: watch removed (auto-delete done)
+  FAIL: task auto-deleted  NAME       ATESPACE   PHASE     ACTOR      WORKER-IP    AGE
+live-api   default    Running   live-api   10.42.0.27   1m
+
+  FAIL: journal: result sent to chat  ot — Telegram control plane for AX...
+Sep 29 07:14:04 serv2 systemd[1217209]: Stopped axbot.service - axbot — Telegram control plane for AX.
+Sep 29 07:14:07 serv2 systemd[1217209]: Started axbot.servi
+LIVE live-calc (/tmp/t-calc.py)
+  ok: gen manifest emitted
+  ok: manifest kind:Task
+  ok: apply accepted
+  ok: bot active after start
+VERIFY live-calc
+    re-applied live-calc (egress race retry)
+  ok: result file in data/
+  ok: result has md
+    md: fib(30)=514229; liczb pierwszych <200: 46 (max 199)
+  ok: watch removed (auto-delete done)
+  FAIL: task auto-deleted  NAME        ATESPACE   PHASE     ACTOR       WORKER-IP    AGE
+live-calc   default    Running   live-calc   10.42.0.27   1m
+live-api    default    Running   live-api    10.42.0.27   5m
+
+  FAIL: journal: result sent to chat  ot — Telegram control plane for AX...
+Sep 29 07:17:40 serv2 systemd[1217209]: Stopped axbot.service - axbot — Telegram control plane for AX.
+Sep 29 07:17:43 serv2 systemd[1217209]: Started axbot.servi
+LIVE live-multi (/tmp/t-multi.py)
+  ok: gen manifest emitted
+  ok: manifest kind:Task
+  ok: apply accepted
+  ok: bot active after start
+VERIFY live-multi
+  ok: result file in data/
+  ok: result has md
+    md: Warszawa 12.7 C; paczkomat SAN01BAPP: Operating
+  ok: watch removed (auto-delete done)
+  FAIL: task auto-deleted  NAME         ATESPACE   PHASE     ACTOR        WORKER-IP    AGE
+live-multi   default    Running   live-multi   10.42.0.26   1m
+live-calc    default    Running   live-calc    10.42.0.27   3m
+live-api  
+  FAIL: journal: result sent to chat  ot — Telegram control plane for AX...
+Sep 29 07:19:18 serv2 systemd[1217209]: Stopped axbot.service - axbot — Telegram control plane for AX.
+Sep 29 07:19:21 serv2 systemd[1217209]: Started axbot.servi
+
+==== LIVE SUITE: 21 pass / 6 fail ====

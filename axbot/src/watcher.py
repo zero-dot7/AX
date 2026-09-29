@@ -32,19 +32,31 @@ class Watchers:
     def get_phase(self, task):
         r = self.axcli.run(["get", "task", task])
         if r.rc != 0:
-            return None
+            out = (r.out or "") + (r.err or "")
+            if "not found" in out.lower() or "NotFound".lower() in out.lower():
+                return None  # task really gone
+            return "ERR"  # transient ax error (actor graph settling etc.)
         for ln in r.out.split("\n"):
             ln = ln.strip()
             if ln.lower().startswith("phase:"):
                 return ln.split(":", 1)[1].strip()
             if ln.lower().startswith("phase "):
                 return ln.split(None, 1)[1].strip().split()[0]
-        return None
+        return "ERR"  # unexpected output — treat as transient
 
-    def watch(self, task, chat):
+    def watch(self, task, chat, since=None):
+        """Arm a watch. Preserves an existing watch's `since`/`sent_file`
+        (rebuild after a restart must NOT clobber a hand-armed since=0 or
+        a delivered-file marker — that swallowed results landed during
+        downtime)."""
         with self._lock:
-            self.state["watches"][task] = {"chat": chat, "phase": None,
-                                           "since": time.time()}
+            meta = self.state["watches"].setdefault(task, {})
+            meta["chat"] = chat
+            meta.setdefault("phase", None)
+            if since is not None:
+                meta["since"] = since
+            else:
+                meta.setdefault("since", time.time())
             self._save()
             if task not in self._threads or \
                     not self._threads[task].is_alive():
@@ -73,13 +85,33 @@ class Watchers:
                 return
             phase = self.get_phase(task)
             if phase is None:
-                # task gone or ax error — stop watching after notice
+                # None means "task gone" OR a transient ax error (the actor
+                # graph settles for ~10-15s right after apply; delete/apply
+                # windows are similar). Removing the watch on the first miss
+                # silently dropped results minutes later. Tolerate a few
+                # consecutive misses before giving up.
+                misses = int(meta.get("misses", 0)) + 1
+                with self._lock:
+                    m2 = self.state["watches"].get(task)
+                    if m2 is not None:
+                        m2["misses"] = misses
+                        self._save()
+                if misses < 3:
+                    time.sleep(self.poll)
+                    continue
+                # task really gone — stop watching after notice
                 with self._lock:
                     self.state["watches"].pop(task, None)
                     self._save()
                 self._send(meta["chat"], f"👁 {task}: task not found "
                                          f"(deleted?) — watch removed")
                 return
+            if phase is not None and meta.get("misses"):
+                with self._lock:
+                    m2 = self.state["watches"].get(task)
+                    if m2 is not None:
+                        m2.pop("misses", None)
+                        self._save()
             if meta["phase"] is not None and phase != meta["phase"]:
                 self._send(meta["chat"], f"👁 {task}: {meta['phase']} → "
                                          f"{phase}")
@@ -90,15 +122,25 @@ class Watchers:
                         self.state["watches"].pop(task, None)
                         self._save()
                     return
-            # result-file trigger: a newer file in ~/ax-test/data means the
-            # run finished even if the Task phase is stuck at Running
+            # result-file trigger: a file in ~/ax-test/data means the run
+            # finished even if the Task phase is stuck at Running. Deliver
+            # on EXISTENCE, not mtime: a file that landed before the bot
+            # started (restart race) has mtime < since forever and would
+            # never fire. Double-send protection = persisted sent_file
+            # (survives rebuild), not the mtime guard.
             path = latest_result(task)
-            if path and path != meta.get("sent_file") and \
-                    os.path.getmtime(path) > meta.get("since", 0):
+            if path and path != meta.get("sent_file"):
                 time.sleep(2)  # let the receiver finish writing
                 path2 = latest_result(task)
                 if path2 == path:
                     self._send_result(meta["chat"], task)
+                    # mark delivered BEFORE cleanup so a crash/restart
+                    # between send and pop cannot re-send the same file
+                    with self._lock:
+                        m2 = self.state["watches"].get(task)
+                        if m2 is not None:
+                            m2["sent_file"] = path
+                            self._save()
                     # auto-cleanup: one-shot tasks stay Running forever and
                     # the substrate controller re-resumes suspended ones, so
                     # delete the finished task to free the worker slot

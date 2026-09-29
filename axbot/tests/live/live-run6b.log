@@ -1,0 +1,42 @@
+LIVE live-api (/tmp/t-api.py)
+  ok: gen manifest emitted
+  ok: manifest kind:Task
+  ok: apply accepted
+  ok: bot active after start
+VERIFY live-api
+  ok: result file in data/
+  ok: result has md
+    md: Paczkomat ?: Operating
+  ok: watch removed (auto-delete done)
+  ok: task auto-deleted
+  ok: journal: result sent to chat
+LIVE live-calc (/tmp/t-calc.py)
+  ok: gen manifest emitted
+  ok: manifest kind:Task
+  ok: apply accepted
+  ok: bot active after start
+VERIFY live-calc
+    re-applied live-calc (egress race retry)
+  FAIL: result file in data/  no live-calc-* file
+  FAIL: watch removed (auto-delete done)  {'live-calc': {'chat': '5063993049', 'phase': 'Running', 'since': 1790678232.4976108}}
+  FAIL: task auto-deleted  NAME        ATESPACE   PHASE     ACTOR       WORKER-IP    AGE
+live-calc   default    Running   live-calc   10.42.0.26   1m
+
+  FAIL: journal: result sent to chat  ot — Telegram control plane for AX...
+Sep 29 10:37:10 serv2 systemd[1217209]: Stopped axbot.service - axbot — Telegram control plane for AX.
+Sep 29 10:37:12 serv2 systemd[1217209]: Started axbot.servi
+LIVE live-multi (/tmp/t-multi.py)
+  ok: gen manifest emitted
+  ok: manifest kind:Task
+  ok: apply accepted
+  ok: bot active after start
+VERIFY live-multi
+    re-applied live-multi (egress race retry)
+  ok: result file in data/
+  ok: result has md
+    md: Warszawa 18.7 C; paczkomat SAN01BAPP: Operating
+  ok: watch removed (auto-delete done)
+  ok: task auto-deleted
+  ok: journal: result sent to chat
+
+==== LIVE SUITE: 22 pass / 4 fail ====
