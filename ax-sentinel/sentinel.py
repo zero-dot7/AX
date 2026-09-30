@@ -274,7 +274,7 @@ def merge_tags(state, r):
 
 
 # Per-task icons (upstream google/ax = microbe)
-ICONS = {"sentinel-upstream": "🦠"}
+ICONS = {"sentinel-axrepo": "🦠", "sentinel-upstream": "🧬"}
 
 
 def render_digest(outcomes, started):
