@@ -273,8 +273,8 @@ def merge_tags(state, r):
     return sorted(set(known + new))
 
 
-# Per-task icons (upstream google/ax = agentic orchestration "DNA" -> helix)
-ICONS = {"sentinel-upstream": "🧬"}
+# Per-task icons (upstream google/ax = microbe)
+ICONS = {"sentinel-upstream": "🦠"}
 
 
 def render_digest(outcomes, started):
