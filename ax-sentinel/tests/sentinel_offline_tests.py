@@ -99,6 +99,9 @@ check("T6.1 includes task names", "t-ok" in d and "t-err" in d)
 check("T6.2 includes error text", "egress failed" in d)
 check("T6.3 includes wall time", "65s" in d)
 check("T6.4 counts ok tasks", "1/2" in d)
+check("T6.5 header is a repo link",
+      d.splitlines()[0] ==
+      "[AX Sentinel — daily repo report](https://github.com/zero-dot7/AX)")
 
 print("T7: merge_tags")
 state = {"upstream": {"tags": ["v0.3.1"]}}
