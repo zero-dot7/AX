@@ -273,16 +273,22 @@ def merge_tags(state, r):
     return sorted(set(known + new))
 
 
+# Per-task icons (upstream google/ax mascot is an axolotl; closest emoji: newt)
+ICONS = {"sentinel-upstream": "🦎"}
+
+
 def render_digest(outcomes, started):
     lines = ["AX Sentinel — daily repo report", ""]
     total_ok = 0
     for name, res, err in outcomes:
         if err:
-            lines.append(f"▪ {name}: ERROR — {err}")
+            icon = ICONS.get(name, "")
+            lines.append(f"▪ {icon} {name}: ERROR — {err}".replace("  ", " "))
             continue
         total_ok += 1
         md = (res or {}).get("md", "")
-        lines.append(f"▪ {name}: OK")
+        icon = ICONS.get(name, "")
+        lines.append(f"▪ {icon} {name}: OK".replace("  ", " "))
         for ln in md.splitlines():
             lines.append("  " + ln)
     lines.append("")
