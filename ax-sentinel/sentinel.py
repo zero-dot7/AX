@@ -276,9 +276,13 @@ def merge_tags(state, r):
 # Per-task icons (upstream google/ax = microbe)
 ICONS = {"sentinel-axrepo": "🦠", "sentinel-upstream": "🧬"}
 
+# Header renders as a clickable link in Telegram (link color); repo is private,
+# but the owner is authed on GitHub so the link resolves for them.
+REPO_URL = "https://github.com/zero-dot7/AX"
+
 
 def render_digest(outcomes, started):
-    lines = ["AX Sentinel — daily repo report", ""]
+    lines = [f"[AX Sentinel — daily repo report]({REPO_URL})", ""]
     total_ok = 0
     for name, res, err in outcomes:
         if err:
