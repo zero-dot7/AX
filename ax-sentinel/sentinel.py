@@ -32,7 +32,7 @@ RECEIVER_POLL_CMD = (
 RUNNER_IMAGE = ("localhost:5001/ax-task-runner@"
                 "sha256:594e20cb3e23a5961cf6c7c9cb40e06e670e43a2172534d17eccbf65f8b1ff94")
 POLL_INTERVAL = 20
-POLL_TIMEOUT = 1800  # 30 min per task — pip install alone takes ~15 min in the sandbox
+POLL_TIMEOUT = 5400  # 90 min per task — generous buffer: pip install ~15 min, sandbox init varies; wall clock cost irrelevant for a daily 05:45 cron
 
 
 def ssh(cmd, timeout=90):
