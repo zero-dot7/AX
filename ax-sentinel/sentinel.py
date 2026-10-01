@@ -302,6 +302,42 @@ def render_digest(outcomes, started):
     return "\n".join(lines)
 
 
+CLEANUP_GRACE = 180  # seconds after digest before ax delete (frees workers)
+
+
+def do_deletes():
+    """Best-effort ax delete of both sentinel tasks; logs to out/cleanup.log."""
+    log = os.path.join(HERE, "out", "cleanup.log")
+    os.makedirs(os.path.dirname(log), exist_ok=True)
+    with open(log, "a") as f:
+        for name in ("sentinel-axrepo", "sentinel-upstream"):
+            try:
+                # teardown may exceed the default ssh timeout (sandbox
+                # Terminating can take minutes) — give delete 15 min
+                rc, out = ssh(f"ax delete task {name}", timeout=900)
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} delete {name}"
+                        f" rc={rc} {out.strip()[:200]}\n")
+            except Exception as e:  # never propagate
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} delete {name}"
+                        f" ERROR {e}\n")
+
+
+def cleanup_tasks(grace=CLEANUP_GRACE):
+    """Detach a child that sleeps `grace` s then deletes both tasks.
+
+    Detached (start_new_session, DEVNULL) so digest delivery is not delayed.
+    Failures are logged and never raise — the next run's delete-then-apply
+    path also cleans up, so this is best-effort only.
+    """
+    code = (f"import sys, time; sys.path.insert(0, {HERE!r});"
+            f"import sentinel; time.sleep({int(grace)});"
+            f"sentinel.do_deletes()")
+    return subprocess.Popen([sys.executable, "-c", code],
+                            start_new_session=True,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "run"
     if mode == "run":
@@ -311,6 +347,7 @@ def main():
         with open(os.path.join(HERE, "out", "digest.txt"), "w") as f:
             digest and f.write(digest)
         print(digest)
+        cleanup_tasks()  # detached: workers freed ~3 min after digest
     elif mode == "digest":
         outcomes, started = run()
         print(render_digest(outcomes, started))
