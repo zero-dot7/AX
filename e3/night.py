@@ -48,6 +48,38 @@ ZAI_ENV = os.path.expanduser("~/.hermes/profiles/ax-factory/.env")
 ZAI_5H_SKIP = 85
 ZAI_WEEKLY_PAUSE = 90
 
+# Stan nocny (sloty 2x/noc od 03/10): feature z adnotacją z dzisiejszą datą
+# nie jest brany ponownie tej nocy (niezależność slotów); porazka wroci nastepnej nocy.
+STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "night-state.json")
+
+
+def _today() -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime())
+
+
+def attempted_today() -> set[str]:
+    """Features juz podjete dzis (dowolny slot, sukces czy porazka)."""
+    try:
+        st = json.load(open(STATE_FILE, encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return set()
+    today = _today()
+    return {f for f, d in st.items() if str(d).startswith(today)}
+
+
+def mark_attempted(feature: str) -> None:
+    st = {}
+    try:
+        st = json.load(open(STATE_FILE, encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        pass
+    today = _today()
+    for f in [k for k, v in st.items() if not str(v).startswith(today)]:
+        del st[f]  # przycinaj stare dni
+    st[feature] = today
+    json.dump(st, open(STATE_FILE, "w", encoding="utf-8"), indent=1)
+
 
 def zai_quota() -> tuple[int, int]:
     """(pct_5h, pct_weekly) z api.z.ai; (-1, -1) = brak klucza / błąd API."""
@@ -89,8 +121,11 @@ def pick_feature(dry: bool) -> str | None:
     """Pierwszy feature, którego funkcji nie ma w src/lab/__init__.py."""
     init = open(os.path.join(make_task.REPO, "src/lab/__init__.py"),
                 encoding="utf-8").read()
+    skip = attempted_today()  # juz podjete dzisiejszej nocy (inny slot)
     for name in QUEUE:
-        fn = FEATURES[name]["test_import"].split()[-1]  # "from lab import slug"
+        if name in skip:
+            continue
+        fn = FEATURES[name]["test_import"].split()[-1]
         if f"def {fn}(" not in init:
             return name
     return None
@@ -199,7 +234,8 @@ def main() -> int:
     else:
         feature = pick_feature(True)
         if feature is None:
-            lines.append("Kolejka pusta — wszystkie features już na main. Nic do roboty.")
+            lines.append("Kolejka pusta — wszystkie features już na main, "
+                         "lub wszystkie podjęte dziś. Nic do roboty.")
             print("\n".join(lines))
             return 0
 
@@ -215,6 +251,7 @@ def main() -> int:
         lines.append("DRY-RUN: deploy pominięty; feature do wykonania: " + feature)
         print("\n".join(lines))
         return 0
+    mark_attempted(feature)  # dopiero realna próba (dry-run nie zatruwa stanu)
 
     not_before = time.time() - 120
     try:
