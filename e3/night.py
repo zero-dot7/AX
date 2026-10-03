@@ -230,6 +230,14 @@ def cleanup_serv2(task_name: str) -> None:
     ssh(f"bash -lc 'ax delete task {task_name}'", timeout=900, check=False)
 
 
+def purge_old_results(task_name: str) -> None:
+    """Usuń stare pliki wyników receivera przed deployem.
+
+    Bez tego wait_result może złapać wynik POPRZEDNIEGO runu tego samego
+    taska (mtime >= start runu, bo POST przyszedł już po starcie)."""
+    ssh(f"rm -f {DATA_DIR}/{task_name}-*.json", check=False)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--feature")
@@ -269,6 +277,7 @@ def main() -> int:
             make_task.render(feature))
         lines.append(f"template OK ({os.path.getsize(local_tpl)} B, "
                      "placeholder __GEMINI_KEY__ zachowany)")
+        purge_old_results(task)
         deploy(local_tpl, task)
         lines.append(f"deploy OK: {task} (apply+egress+resume)")
         payload = wait_result(task, not_before)
