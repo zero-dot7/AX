@@ -623,4 +623,102 @@ FEATURES = {
             "print('ALL SPEC TESTS PASSED')",
         ],
     },
+    # ---- pipeline "testy dziennie" propozycja 1 (expr: lex -> parse -> eval) ----
+    "expr-lex": {
+        "spec_file": "specs/expr-lex.md",
+        "branch": "feat/expr-lex",
+        "prompt_core": (
+            "expr_lex w tym jednym pliku (def expr_lex(src: str) -> list), "
+            "definicja __all__ = [\"expr_lex\"], "
+            "tokeny 2-krotki (kind, value) kind in NUM/OP/LPAREN/RPAREN, "
+            "NUM = cyfry z opcjonalna jedna kropka wewnatrz (wartosc jako "
+            "string doslowny), OP = + - * /, nawiasy LPAREN/RPAREN, "
+            "whitespace pomijany, inny znak => ValueError z tym znakiem "
+            "w message, pusty/whitespace-only input => [], brak walidacji "
+            "gramatyki ('+ + 3' to poprawne 3 tokeny)"
+        ),
+        "test_file": "tests/test_expr_lex.py",
+        "test_import": "from lab import expr_lex",
+        "test_lines": [
+            "assert expr_lex('2 + 3 * (4 - 1)') == [('NUM','2'),('OP','+'),('NUM','3'),('OP','*'),('LPAREN','('),('NUM','4'),('OP','-'),('NUM','1'),('RPAREN',')')], 'basic'",
+            "assert expr_lex('3.14') == [('NUM','3.14')], 'float literal kept as string'",
+            "assert expr_lex('.5') == [('NUM','.5')], 'leading dot'",
+            "assert expr_lex('1\\t+2') == [('NUM','1'),('OP','+'),('NUM','2')], 'tab is whitespace'",
+            "assert expr_lex('') == [], 'empty'",
+            "assert expr_lex('   ') == [], 'whitespace-only'",
+            "assert expr_lex('1 2') == [('NUM','1'),('NUM','2')], 'no grammar validation'",
+            "assert expr_lex('+ + 3') == [('OP','+'),('OP','+'),('NUM','3')], 'grammar-agnostic'",
+            "try:",
+            "    expr_lex('1 + a'); raise SystemExit('no ValueError for bad char')",
+            "except ValueError as e:",
+            "    assert 'a' in str(e), 'message contains offending char'",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+    "expr-parse": {
+        "spec_file": "specs/expr-parse.md",
+        "branch": "feat/expr-parse",
+        "prompt_core": (
+            "expr_parse w tym jednym pliku (def expr_parse(tokens: list) -> dict), "
+            "definicja __all__ = [\"expr_parse\"], AST: lisc {'type':'num','value':float}, "
+            "binop {'type':'binop','op':str,'left':node,'right':node}; gramatyka "
+            "expr:=term (('+'|'-') term)*, term:=factor (('*'|'/') factor)*, "
+            "factor:=NUM | '(' expr ')' | ('-'|'+') factor (prefix znak wiaze "
+            "najscisniej); NUM przez float(); malformed => ValueError (nadmiarowe "
+            "tokeni po sparsowaniu, pusta lista, niezbalansowane nawiasy, operator "
+            "tam gdzie czekamy factora, wiszacy operator); funkcja NIE wywoluje "
+            "expr_lex, przyjmuje wylacznie tokeny"
+        ),
+        "test_file": "tests/test_expr_parse.py",
+        "test_import": "from lab import expr_parse, expr_lex",
+        "test_lines": [
+            "assert expr_parse([('NUM','2')]) == {'type':'num','value':2.0}, 'leaf'",
+            "N2 = {'type':'num','value':2.0}; N3 = {'type':'num','value':3.0}; N4 = {'type':'num','value':4.0}",
+            "assert expr_parse(expr_lex('2+3*4')) == {'type':'binop','op':'+','left':N2,'right':{'type':'binop','op':'*','left':N3,'right':N4}}, 'precedence + consumes term'",
+            "assert expr_parse(expr_lex('(2+3)*4')) == {'type':'binop','op':'*','left':{'type':'binop','op':'+','left':N2,'right':N3},'right':N4}, 'parens override'",
+            "assert expr_parse(expr_lex('-3*4')) == {'type':'binop','op':'*','left':{'type':'num','value':-3.0},'right':N4}, 'unary binds tighter than *'",
+            "assert expr_parse(expr_lex('2*-3')) == {'type':'binop','op':'*','left':N2,'right':{'type':'num','value':-3.0}}, 'unary in right factor'",
+            "for bad_src, bad_why in [('1 2','leftover tokens'), ('','empty'), ('(1','unbalanced open'), ('1)','unbalanced close'), ('1 +','dangling op'), ('* 2','op where factor expected')]:",
+            "    try:",
+            "        expr_parse(expr_lex(bad_src)); raise SystemExit('no ValueError: %s' % bad_why)",
+            "    except ValueError:",
+            "        pass",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+    "expr-eval": {
+        "spec_file": "specs/expr-eval.md",
+        "branch": "feat/expr-eval",
+        "prompt_core": (
+            "expr_eval w tym jednym pliku (def expr_eval(ast: dict) -> float), "
+            "definicja __all__ = [\"expr_eval\"], num => float(value), binop => "
+            "rekurencyjnie left/right potem + - * /, dzielenie przez zero => "
+            "naturalny ZeroDivisionError (nie lapac), nieznany type lub op => "
+            "ValueError, czysta rekurencja bez eval()/exec()/importow; "
+            "expr_lex i expr_parse (juz w pliku, skopiowane 1:1) maja zostac "
+            "bez zmian — testy uruchamiaja caly pipeline end-to-end"
+        ),
+        "test_file": "tests/test_expr_eval.py",
+        "test_import": "from lab import expr_eval, expr_parse, expr_lex",
+        "test_lines": [
+            "assert expr_eval({'type':'num','value':5}) == 5.0, 'leaf int-coerce'",
+            "assert expr_eval(expr_parse(expr_lex('2 + 3 * (4 - 1)'))) == 11.0, 'end-to-end invariant'",
+            "assert expr_eval(expr_parse(expr_lex('10 / 4'))) == 2.5, 'true division'",
+            "assert expr_eval(expr_parse(expr_lex('-2 * 3'))) == -6.0, 'unary end-to-end'",
+            "assert expr_eval(expr_parse(expr_lex('2 * (3 + 4) - 5'))) == 9.0, 'nested'",
+            "try:",
+            "    expr_eval(expr_parse(expr_lex('1/0'))); raise SystemExit('no ZeroDivisionError')",
+            "except ZeroDivisionError:",
+            "    pass",
+            "try:",
+            "    expr_eval({'type':'bad'}); raise SystemExit('no ValueError type')",
+            "except ValueError:",
+            "    pass",
+            "try:",
+            "    expr_eval({'type':'binop','op':'%','left':{'type':'num','value':1},'right':{'type':'num','value':2}}); raise SystemExit('no ValueError op')",
+            "except ValueError:",
+            "    pass",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
 }

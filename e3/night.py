@@ -41,7 +41,8 @@ QUEUE = ["slug", "rolling", "titlecase",
          "word-counts", "chunk", "ngrams", "rle", "template", "parse-kv",  # poziomy 1-3 od 02/10
          "semver", "conventional-commit", "parse-duration",  # fala 2 L4 od 03/10
          "crontab-next", "changelog", "git-diff-stat", "git-log-json",  # fala 2 L5
-         "env-lint", "parse-diff"]  # fala 2 L6
+         "env-lint", "parse-diff",  # fala 2 L6
+         "expr-lex", "expr-parse", "expr-eval"]  # pipeline "testy dziennie" P1 (manual trigger)
 
 # Safeguard quota Z.ai (plan E3 krok 4): 5h >= 85% -> skip nocy; weekly >= 90% -> pauza.
 ZAI_ENV = os.path.expanduser("~/.hermes/profiles/ax-factory/.env")
