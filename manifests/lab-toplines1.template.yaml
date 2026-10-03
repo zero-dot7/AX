@@ -1,0 +1,182 @@
+apiVersion: ax.io/v1alpha1
+kind: Workspace
+metadata:
+    name: agent-lab
+    atespace: default
+spec:
+    git:
+        - name: agent-lab
+          repo: http://100.65.215.34:18080/agent-lab.git
+          branch: main
+          depth: 1
+---
+apiVersion: ax.io/v1alpha1
+kind: Task
+metadata:
+    name: lab-toplines1
+    atespace: default
+spec:
+    image: localhost:5001/ax-task-runner@sha256:594e20cb3e23a5961cf6c7c9cb40e06e670e43a2172534d17eccbf65f8b1ff94
+    workspaces:
+        - name: agent-lab
+          path: /workspace
+    command:
+        - python3
+        - -c
+        - |
+          import subprocess, json, urllib.request, datetime, os, shlex, sys, tarfile, re, difflib
+
+          NODE_VER = "v22.23.3"
+          TGZ = f"node-{NODE_VER}-linux-arm64.tar.gz"
+          NODE = f"/tmp/node-{NODE_VER}-linux-arm64/bin"
+          RECEIVER = "http://100.65.215.34:18080/lab-toplines1"
+
+          status, answer, raw_tail, patch, tests_out = "unknown", "", "", "", ""
+          _LAST = {"stderr": "", "cmd": ""}
+
+          def sh(cmd, timeout=1500):
+              print("$", cmd.split()[0], "...", flush=True)
+              try:
+                  p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+              except subprocess.TimeoutExpired:
+                  print("TIMEOUT", cmd[:60], flush=True)
+                  return None
+              print("rc=", p.returncode, flush=True)
+              if p.returncode != 0:
+                  print("STDERR:", p.stderr[-1500:], flush=True)
+              _LAST["stderr"] = (p.stderr or "")[-1500:]
+              _LAST["cmd"] = cmd[:120]
+              return p
+
+          try:
+              # 0) repo z wbudowanego tarballa base64 (GET z sandboxu zablokowany przez proxy)
+              import base64, io
+              # repo: pobierz tarball z receivera (GET /payload/), zamiast inline b64
+              # (env limit 32 KiB — inline tarball ~30 KB łamie ActorTemplate)
+              import urllib.request
+              with open("/tmp/repo.tar.gz", "wb") as f:
+                  f.write(urllib.request.urlopen(
+                      "http://100.65.215.34:18080/payload/repo.tar.gz",
+                      timeout=30).read())
+              REPO_B64 = None  # nie używane; tarball już na dysku
+              os.makedirs("repo", exist_ok=True)
+              import tarfile
+              with tarfile.open("/tmp/repo.tar.gz") as tf:
+                  tf.extractall("repo")
+              os.makedirs("/workspace/agent-lab", exist_ok=True)
+              with tarfile.open("/tmp/repo.tar.gz") as tf:
+                  tf.extractall("/workspace/agent-lab", filter="data")
+              repo = "/workspace/agent-lab"
+              print("REPO:", repo, flush=True)
+              spec_path = os.path.join(repo, "specs", "top-lines.md")
+              spec = open(spec_path, encoding="utf-8").read()
+              print("SPEC_LEN:", len(spec), flush=True)
+
+              # 1) Gemini REST single-shot (free tier: 5 req/min -> 1 request, retry z backoff)
+              import time
+              PROMPT = ("Zaimplementuj w Pythonie funkcje opisana specyfikacja. Zwroc DOKLADNIE jeden blok kodu "
+                        "w markdown (```python ... ```), zaden tekst poza nim. "
+                        "Blok = pelna zawartosc pliku src/lab/__init__.py: kompletna samodzielna implementacja "
+                        "top_lines w tym jednym pliku (def top_lines(text: str, n: int = 5) -> list[str]), "
+                        "definicja __all__ = [\"top_lines\"], ZERO importow z innych modulow pakietu lab. "
+                        "Scoring: dlugosc linii cap 120 + 5 za kazdy znak '#'; puste linie nigdy w wyniku; "
+                        "n > liczba kandydatow -> wszystkie; n <= 0 -> ValueError; wynik w kolejnosci wystepowania. "
+                        "SPECYFIKACJA:\n" + spec)
+              body = json.dumps({"contents":[{"role":"user","parts":[{"text":PROMPT}]}],
+                                 "generationConfig":{"temperature":0.2,"maxOutputTokens":4096}}).encode()
+              url = ("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key="
+                     + os.environ["GEMINI_API_KEY"])
+              answer = ""
+              for attempt in range(6):
+                  req = urllib.request.Request(url, data=body, headers={"Content-Type":"application/json"})
+                  try:
+                      r = urllib.request.urlopen(req, timeout=180)
+                      d = json.loads(r.read())
+                      cands = d.get("candidates") or []
+                      if not cands:
+                          raise RuntimeError("no candidates: " + json.dumps(d)[:300])
+                      answer = "".join(p.get("text","") for p in cands[0].get("content",{}).get("parts",[])).strip()
+                      break
+                  except urllib.error.HTTPError as e:
+                      msg = e.read().decode()[:300]
+                      print("HTTP", e.code, msg[:200], flush=True)
+                      raw_tail = (raw_tail + "\nHTTP " + str(e.code) + ": " + msg).strip()[-4000:]
+                      if e.code in (429, 500, 503) and attempt < 5:
+                          time.sleep(25 * (attempt + 1))
+                          continue
+                      raise
+              if not answer:
+                  raise RuntimeError("empty answer from gemini")
+              print("ANSWER_LEN:", len(answer), flush=True)
+              raw_tail = answer[-1500:]
+
+              # 4) ekstrakcja blokow -> pliki
+              blocks = re.findall(r"```(?:python)?\s*\n(.*?)```", answer, re.S)
+              if len(blocks) < 1:
+                  raise RuntimeError(f"expected 1 code block, got {len(blocks)}; head=" + answer[:400])
+              src_code = blocks[0].strip() + "\n"
+              src_path = os.path.join(repo, "src", "lab", "__init__.py")
+              old_src = open(src_path, encoding="utf-8").read() if os.path.exists(src_path) else ""
+              os.makedirs(os.path.dirname(src_path), exist_ok=True)
+              open(src_path, "w", encoding="utf-8").write(src_code)
+
+              # 5) deterministyczne testy wlasne (zgodne ze spec), pisane przez skrypt
+              test_code = "\n".join([
+                  "import sys",
+                  "sys.path.insert(0, 'src')",
+                  "from lab import top_lines",
+                  "",
+                  "assert top_lines('a\\nbb\\nccc', 2) == ['bb', 'ccc'], 'top-n by score, appearance order'",
+                  "assert top_lines('aaa\\n# b\\ncc', 1) == ['# b'], 'heading bonus'",
+                  "assert top_lines('one\\ntwo', 99) == ['one', 'two'], 'n > lines returns all'",
+                  "assert top_lines('x\\n\\n   \\ny', 5) == ['x', 'y'], 'blank lines never returned'",
+                  "for bad in (0, -3):",
+                  "    try:",
+                  "        top_lines('x', bad); raise SystemExit('no ValueError for n=%d' % bad)",
+                  "    except ValueError:",
+                  "        pass",
+                  "assert top_lines('zz\\naa', 2) == ['zz', 'aa'], 'order of appearance preserved'",
+                  "long = 'L' * 300",
+                  "assert top_lines(long + '\\n' + 'm' * 100, 1) == [long], 'cap 120: 100-char beats 300-char'",
+                  "assert top_lines('# a\\n## b', 2) == ['# a', '## b'], 'each # counts, appearance order'",
+                  "print('ALL SPEC TESTS PASSED')",
+                  ""])
+              test_path = os.path.join(repo, "tests", "test_top_lines.py")
+              os.makedirs(os.path.dirname(test_path), exist_ok=True)
+              open(test_path, "w", encoding="utf-8").write(test_code)
+
+              # 6) testy w sandboxie
+              t = sh(f"cd {repo} && python3 tests/test_top_lines.py", timeout=120)
+              tests_out = (((t.stdout or "") + "\n" + (t.stderr or ""))[-2000:]) if t else "TIMEOUT"
+              print("TESTS_RC:", t.returncode if t else "timeout", flush=True)
+              if not t or t.returncode != 0:
+                  raise RuntimeError("tests failed in sandbox")
+
+              # 7) unified diff (bez git w sandboxie)
+              d1 = list(difflib.unified_diff(old_src.splitlines(True), src_code.splitlines(True),
+                        "a/src/lab/__init__.py", "b/src/lab/__init__.py"))
+              d2 = list(difflib.unified_diff([], test_code.splitlines(True),
+                        "a/tests/test_top_lines.py", "b/tests/test_top_lines.py"))
+              patch = "--- feat/top-lines\n" + "".join(d1) + "".join(d2)
+              status = "ok"
+          except Exception as e:
+              status = "error: " + repr(e)[:300]
+              raw_tail = (raw_tail + "\n[" + _LAST["cmd"] + "]\n" + _LAST["stderr"]).strip()[-4000:]
+
+          payload = json.dumps({
+              "task": "lab-toplines1", "status": status,
+              "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "answer": answer[:8000], "patch": patch[:30000],
+              "tests_out": tests_out[:2000], "raw_tail": raw_tail[:3000],
+          }, ensure_ascii=False).encode()
+          req = urllib.request.Request(RECEIVER, data=payload, headers={"Content-Type": "application/json"})
+          try:
+              code = urllib.request.urlopen(req, timeout=15).status
+          except Exception as e:
+              code = repr(e)
+          print("PHASE_POST:", code, flush=True)
+          print("FINAL_STATUS:", status, flush=True)
+    env:
+        - name: GEMINI_API_KEY
+          value: "__GEMINI_KEY__"
+    debug: true

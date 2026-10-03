@@ -168,6 +168,14 @@ def preflight() -> list[str]:
 
 
 def deploy(task_yaml_local: str, task_name: str) -> None:
+    # 0) tarball repo -> serv2 payloads/ (sandbox pobiera go GET /payload/repo.tar.gz;
+    #    inline REPO_B64 łamał limit 32 KiB env/command w ActorTemplate)
+    tar_local = f"/tmp/e3-{task_name}-repo.tar.gz"
+    subprocess.run(["bash", "-c",
+                    f"git -C {make_task.REPO} archive --format=tar.gz HEAD > {tar_local}"],
+                   check=True)
+    subprocess.run(["scp", "-q", tar_local,
+                    f"{SERV2}:~/ax-test/payloads/repo.tar.gz"], check=True)
     # template (placeholder) -> serv2; klucz wstrzykiwany TYLKO tam
     subprocess.run(["scp", "-q", task_yaml_local, f"{SERV2}:{REMOTE_TPL}"],
                    check=True)
