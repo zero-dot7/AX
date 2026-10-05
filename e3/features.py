@@ -726,4 +726,814 @@ FEATURES = {
             "print('ALL SPEC TESTS PASSED')",
         ],
     },
+
+    "report-aggregate": {
+        "spec_file": "specs/report-aggregate.md",
+        "branch": "feat/report-aggregate",
+        "prompt_core": (
+            "report_aggregate w tym jednym pliku (def report_aggregate("
+            "commits: list)), definicja __all__ = [\"report_aggregate\"], "
+            "agreguje wyjscie git_log_json: total=len(commits); typ commita "
+            "= czesc subjecta przed pierwszym ':' ALE tylko gdy prefiks "
+            "niepusty i wylacznie [A-Za-z0-9-] (inaczej 'other'), prefiks "
+            "verbatim; by_type {typ: liczba} klucze sortowanie: count DESC "
+            "potem typ ASC; by_date {data: liczba} klucze data ASC; zwrot "
+            "DOKLADNIE {'total':int,'by_type':dict,'by_date':dict}; puste "
+            "wejscie => {'total':0,'by_type':{},'by_date':{}}; nie mutowac "
+            "wejscia; brak klucza 'subject' lub 'date' => KeyError "
+            "(naturalny dostep do dicta)"
+        ),
+        "test_file": "tests/test_report_aggregate.py",
+        "test_import": "from lab import report_aggregate, git_log_json",
+        "test_lines": [
+            "commits = git_log_json('h1|2026-10-01|feat: x\\nh2|2026-10-01|fix: y\\nh3|2026-10-02|feat: z\\nh4|2026-10-02|no colon here\\nh5|2026-10-01|Merge branch \\'main\\'')",
+            "s = report_aggregate(commits)",
+            "assert s['total'] == 5, 'total'",
+            "assert list(s['by_type'].items()) == [('feat', 2), ('other', 2), ('fix', 1)], f\"by_type order: {s['by_type']}\"",
+            "assert list(s['by_date'].items()) == [('2026-10-01', 3), ('2026-10-02', 2)], 'by_date order'",
+            "assert report_aggregate([]) == {'total': 0, 'by_type': {}, 'by_date': {}}, 'empty'",
+            "c2 = [{'hash':'a','date':'d','subject':'feat: x'}]",
+            "assert report_aggregate(c2)['by_type'] == {'feat': 1}, 'single'",
+            "try:",
+            "    report_aggregate([{'hash': 'a'}]); raise SystemExit('no KeyError')",
+            "except KeyError:",
+            "    pass",
+            "try:",
+            "    report_aggregate([{'hash': 'a', 'date': 'd'}]); raise SystemExit('no KeyError subject')",
+            "except KeyError:",
+            "    pass",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+
+    "report-render": {
+        "spec_file": "specs/report-render.md",
+        "branch": "feat/report-render",
+        "prompt_core": (
+            "report_render w tym jednym pliku (def report_render(summary: "
+            "dict)), definicja __all__ = [\"report_render\"], renderuje "
+            "wyjscie report_aggregate {'total','by_type','by_date'} do "
+            "Markdowna. DOKLADNA konstrukcja zwrotki DOSLOWNYM pseudokodem "
+            "(nic nie pomijaj, nic nie dodawaj):\n"
+            "```\n"
+            "lines = ['# Commit Report', '', 'Total: ' + str(total)]\n"
+            "lines.append('')\n"
+            "lines.append('## By type')\n"
+            "if by_type:\n"
+            "    lines.append('')\n"
+            "    for k, v in by_type.items(): lines.append('- ' + k + ': ' + str(v))\n"
+            "lines.append('')\n"
+            "lines.append('## By date')\n"
+            "if by_date:\n"
+            "    lines.append('')\n"
+            "    for k, v in by_date.items(): lines.append('- ' + k + ': ' + str(v))\n"
+            "return chr(10).join(lines) + chr(10)\n"
+            "```\n"
+            "puste by_type/by_date => naglowek sekcji BEZ pustej linii za "
+            "nim; pojedynczy trailing newline; czysta funkcja, nie mutuje "
+            "wejścia; wzorcowy przyklad w specu jest DOSLOWNYM oczekiwanym "
+            "wynikiem"
+        ),
+        "test_file": "tests/test_report_render.py",
+        "test_import": "from lab import report_render, report_aggregate, git_log_json",
+        "test_lines": [
+            "expected = '# Commit Report\\n\\nTotal: 2\\n\\n## By type\\n\\n- feat: 1\\n- fix: 1\\n\\n## By date\\n\\n- 2026-10-01: 2\\n'",
+            "summary = report_aggregate(git_log_json('h1|2026-10-01|feat: x\\nh2|2026-10-01|fix: y'))",
+            "assert report_render(summary) == expected, f'pipeline: {report_render(summary)!r}'",
+            "e2 = '# Commit Report\\n\\nTotal: 0\\n\\n## By type\\n\\n## By date\\n'",
+            "assert report_render(report_aggregate([])) == e2, 'empty sections'",
+            "assert not report_render(summary).endswith('\\n\\n'), 'single trailing newline'",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+    "parse-url": {
+        "spec_file": "specs/parse-url.md",
+        "branch": "feat/parse-url",
+        "prompt_core": (
+            "parse_url w tym jednym pliku (def parse_url(url: str) -> dict), "
+            "definicja __all__ = [\\\"parse_url\\\"], zwraca dict o DOKLADNIE "
+            "6 kluczach {'scheme','host','port','path','query','fragment'}; "
+            "algorytm DOSLOWNIE (nic nie pomijaj):\\n"
+            "```\\n"
+            "scheme, rest = url.split('://', 1)  # brak '://' lub pusty scheme => ValueError\\n"
+            "scheme = scheme.lower()\\n"
+            "if '#' in rest: rest, fragment = rest.split('#', 1)  # pierwszy '#', fragment bez '#'\\n"
+            "else: fragment = ''\\n"
+            "if '?' in rest: rest, qs = rest.split('?', 1)\\n"
+            "else: qs = ''\\n"
+            "if '/' in rest: host_port, path_tail = rest.split('/', 1); path = '/' + path_tail\\n"
+            "else: host_port, path = rest, ''\\n"
+            "if ':' in host_port: host, port_str = host_port.rsplit(':', 1)\\n"
+            "  # UWAGA: z pustym port_str lub nie-liczba => ValueError;\\n"
+            "  # port_str.isdigit() i int(port_str)\\n"
+            "else: port = None\\n"
+            "host = host.lower()\\n"
+            "if not host: raise ValueError\\n"
+            "query = {}\\n"
+            "if qs:  # split po '&', kazdy element split po PIERWSZYM '=',\\n"
+            "  # brak '=' => wartosc ''; powtorzone klucze: OSTATNIA wygrywa;\\n"
+            "  # BEZ url-decode\\n"
+            "return {'scheme':scheme,'host':host,'port':port,'path':path,'query':query,'fragment':fragment}\\n"
+            "```\\n"
+            "https://ex.com/k%20v?x=a%20b => query {'x':'a%20b'} (no decode); "
+            "wzorcowe przyklady w specu sa DOSLOWNYMI oczekiwanymi wynikami"
+        ),
+        "test_file": "tests/test_parse_url.py",
+        "test_import": "from lab import parse_url",
+        "test_lines": [
+            "assert parse_url('https://example.com') == {'scheme':'https','host':'example.com','port':None,'path':'','query':{},'fragment':''}, 'basic'",
+            "r = parse_url('http://example.com:8080/a?b=1')",
+            "assert r == {'scheme':'http','host':'example.com','port':8080,'path':'/a','query':{'b':'1'},'fragment':''}, 'port+path+query'",
+            "r = parse_url('HTTP://ExAmple.COM')",
+            "assert r['scheme'] == 'http' and r['host'] == 'example.com', 'case normalization'",
+            "assert parse_url('https://ex.com/?a=1&a=2')['query'] == {'a':'2'}, 'dup key last wins'",
+            "assert parse_url('https://ex.com/k%20v?x=a%20b')['query'] == {'x':'a%20b'}, 'no decode'",
+            "r = parse_url('https://ex.com/p#frag')",
+            "assert r['fragment'] == 'frag' and r['path'] == '/p', 'fragment'",
+            "r = parse_url('ftp://files.example.com')",
+            "assert r['path'] == '' and r['port'] is None and r['scheme'] == 'ftp', 'no path'",
+            "for bad in ['example.com', '://x', 'https://', 'https://ex.com:', 'https://ex.com:abc/']:",
+            "    try:",
+            "        parse_url(bad); raise SystemExit('no ValueError: %s' % bad)",
+            "    except ValueError:",
+            "        pass",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+    "parse-url-tests": {
+        "spec_file": "specs/parse-url.md",
+        "branch": "feat/parse-url-tests",
+        "answer_path": "tests/test_parse_url.py",
+        "gate_file": "tests/test_zz_spec_gate.py",
+        "prompt_core": (
+            "Testuj FUNKCJE, nie implementacje: kazda asercja porownuje "
+            "wynik parse_url(...) z oczekiwana wartoscia. Nie przepisuj kodu "
+            "zrodlowego do testow. OSTATNIA linia pliku MUSI byc doslownie: "
+            "print('ALL SPEC TESTS PASSED') — bez tego walidacja odrzuca prace."
+        ),
+        "prompt_head": (
+            "Jestes inzynierem QA. Napisz plik testowy dla funkcji parse_url "
+            "z pliku src/lab/__init__.py, ktorego pelny kod otrzymasz ponizej. "
+            "Zwroc DOKLADNIE jeden blok kodu w markdown (```python ... ```), "
+            "zaden tekst poza nim. Blok = pelna zawartosc pliku "
+            "tests/test_parse_url.py."
+        ),
+        "prompt_tail": (
+            "\nWYMAGANIA PLIKU TESTOWEGO:\n"
+            "1. Na gorze: import sys; sys.path.insert(0, 'src'); "
+            "from lab import parse_url\n"
+            "2. Minimum 10 funkcji def test_*(), lacznie minimum 30 "
+            "asercji assert. Kategorie obowiazkowe: happy path (scheme, host, "
+            "port domyslny, path, query, fragment), port jawny, scheme/host "
+            "wielkimi literami, path pusty vs sam ukośnik, query pusta, "
+            "fragment pusty, zly scheme (ValueError), zly port (ValueError), "
+            "brak hosta (ValueError).\n"
+            "3. TYLKO czysty Python i assert — zadnego pytest, zadnych "
+            "importow poza sys.\n"
+            "4. Na koncu pliku DOSLOWNIE:\n"
+            "if __name__ == '__main__':\n"
+            "    _fns = [(n, f) for n, f in sorted(globals().items()) "
+            "if n.startswith('test_') and callable(f)]\n"
+            "    for _n, _f in _fns:\n"
+            "        _f()\n"
+            "    print('ALL TESTS PASSED (%d)' % len(_fns))\n"
+            "KOD ZRODLOWY DO PRZETESTOWANIA (nie zmieniaj go, tylko testuj):\n"
+            "```python\n{existing}\n```\n"
+        ),
+        "test_file": "tests/test_parse_url.py",
+        "test_import": "from lab import parse_url",
+        "test_lines": [
+            "import re",
+            "src = open('tests/test_parse_url.py', encoding='utf-8').read()",
+            "assert len(re.findall(r'^def test_', src, re.M)) >= 10, 'za malo funkcji testowych'",
+            "assert len(re.findall(r'\\bassert\\b', src)) >= 30, 'za malo asercji'",
+            "assert 'pytest' not in src, 'zakaz pytest'",
+            "assert src.count('def test_') == len(re.findall(r'^def test_', src, re.M)), 'def test_ tylko na poczatku linii'",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+    "parse-url-harden": {
+        "spec_file": "specs/parse-url.md",
+        "branch": "feat/parse-url-harden",
+        "prompt_core": (
+            "W src/lab/__init__.py umozliwiaj current parse_url — NIE zmieniaj "
+            "zachowania zpunktu widzenia istniejacych testow. Doloz wyłącznie "
+            "hardening zgodnie z sekcja 8 specs/parse-url.md: "
+            "a) userinfo: host_port zawiera '@' → usun wszystko do OSTATNIEGO "
+            "'@' włącznie (reszta to host[:port]). "
+            "b) IPv6: host_port zaczyna sie od '[' → host = zawartosc miedzy "
+            "'[' a PIERWSZYM ']' (lowercase, bez nawiasow); port = po ']:'; "
+            "']' przed '[' lub brak ']' → ValueError. "
+            "c) port po int() musi byc 1..65535, inaczej ValueError. "
+            "Nie ruszaj tests/. OSTATNIA linia zwracanego pliku MUSI byc "
+            "doslownie print('ALL SPEC TESTS PASSED') — bez tego walidacja "
+            "odrzuca prace."
+        ),
+        "test_file": "tests/test_zz_spec_gate.py",
+        "test_import": "from lab import parse_url",
+        "test_lines": [
+            "def _ve(f):",
+            "    try:",
+            "        f()",
+            "        return False",
+            "    except ValueError:",
+            "        return True",
+            "r = parse_url('https://user@example.com')['host'] == 'example.com'",
+            "r = r and parse_url('https://u:p@ex.com:8443/x')['port'] == 8443",
+            "r = r and parse_url('https://[::1]:8080')['host'] == '::1'",
+            "r = r and parse_url('https://[::1]:8080')['port'] == 8080",
+            "r = r and parse_url('https://[::1]')['port'] is None",
+            "r = r and parse_url('https://[Fe80::1]/a')['host'] == 'fe80::1'",
+            "r = r and parse_url('https://ex.com:443/')['port'] == 443",
+            "r = r and _ve(lambda: parse_url('https://ex.com:0/'))",
+            "r = r and _ve(lambda: parse_url('https://ex.com:70000/'))",
+            "r = r and _ve(lambda: parse_url('https://[::1/x'))",
+            "r = r and _ve(lambda: parse_url('https://]weird[/x'))",
+            "assert r, 'hardening edge-cases failed'",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+
+    "api-docs": {
+        "spec_file": "specs/api-docs.md",
+        "branch": "feat/api-docs",
+        "answer_path": "src/lab/api_docs.py",
+        "gate_file": "tests/test_zz_spec_gate.py",
+        "prompt_head": 'Jestes dokumentalista API. Napisz plik src/lab/api_docs.py bedacy dokumentacja API pakietu lab. Zwroc DOKLADNIE jeden blok kodu w markdown (```python ... ```), zaden tekst poza nim. Blok = pelna zawartosc pliku src/lab/api_docs.py.',
+        "prompt_core": 'Utworz NOWY plik src/lab/api_docs.py: dokumentacja API pakietu lab jako module-level docstring z wykonywalnymi doctestami (format sekcji i wymagania ponizej). Plik = docstring + najwyzej importy, ZERO logiki i definicji. Kazda z 27 nazw publicznych lab.__all__ musi miec sekcje z opisem i przykladem \'>>>\', ktorego oczekiwany wynik jest DOSLOWNY (doctest porownuje znak po znaku - przesledz kod zrodlowy). Kazdy przyklad zaczyna sie wlasnym importem, np. >>> from lab import slug. Opisy po angielsku, plik TYLKO ASCII. Nie modyfikuj zadnego innego pliku.\nTRZY funkcje zyja w src/lab/reporting.py (kod ponizej, dokladnie ta semantyka):\n```python\nfrom __future__ import annotations\nimport re\n\n\ndef git_log_json(text: str) -> list[dict[str, str]]:\n    if not text:\n        return []\n\n    lines = text.splitlines()\n    result = []\n\n    for idx, line in enumerate(lines, start=1):\n        if not line.strip():\n            continue\n\n        parts = line.split(\'|\', 2)\n        if len(parts) != 3:\n            raise ValueError(f"Line {idx} does not contain exactly two \'|\' separators.")\n\n        commit_hash, date, subject = parts\n        result.append({\n            \'hash\': commit_hash,\n            \'date\': date,\n            \'subject\': subject\n        })\n\n    return result\n\n\ndef report_aggregate(commits: list[dict]) -> dict:\n    total = len(commits)\n    type_counts = {}\n    date_counts = {}\n\n    for commit in commits:\n        subj = commit[\'subject\']\n        dt = commit[\'date\']\n\n        if \':\' in subj:\n            prefix = subj.split(\':\', 1)[0]\n            if prefix and re.fullmatch(r\'[A-Za-z0-9-]+\', prefix):\n                commit_type = prefix\n            else:\n                commit_type = \'other\'\n        else:\n            commit_type = \'other\'\n\n        type_counts[commit_type] = type_counts.get(commit_type, 0) + 1\n        date_counts[dt] = date_counts.get(dt, 0) + 1\n\n    sorted_types = sorted(type_counts.items(), key=lambda item: (-item[1], item[0]))\n    by_type = {t: c for t, c in sorted_types}\n\n    sorted_dates = sorted(date_counts.items(), key=lambda item: item[0])\n    by_date = {d: c for d, c in sorted_dates}\n\n    return {\n        \'total\': total,\n        \'by_type\': by_type,\n        \'by_date\': by_date\n    }\n\n\ndef report_render(summary: dict, style: str = \'md\') -> str:\n    total = summary[\'total\']\n    by_type = summary[\'by_type\']\n    by_date = summary[\'by_date\']\n    lines = [\'# Commit Report\', \'\', \'Total: \' + str(total)]\n    lines.append(\'\')\n    lines.append(\'## By type\')\n    if by_type:\n        lines.append(\'\')\n        for k, v in by_type.items(): lines.append(\'- \' + k + \': \' + str(v))\n    lines.append(\'\')\n    lines.append(\'## By date\')\n    if by_date:\n        lines.append(\'\')\n        for k, v in by_date.items(): lines.append(\'- \' + k + \': \' + str(v))\n    if style == \'text\':\n        lines = [l[3:] if l.startswith(\'## \') else\n                 l[1:].lstrip() if l.startswith(\'#\') else l\n                 for l in lines]\n    elif style != \'md\':\n        raise ValueError(\'unknown style: \' + str(style))\n    return chr(10).join(lines) + chr(10)\n```\nPozostale 24 nazwy (wlacznie z klasa Template) sa eksportowane z src/lab/__init__.py - pelny kod na koncu promptu.',
+        "prompt_tail": "\nFORMAT SEKCJI dla kazdej nazwy (wewnatrz module-level docstring):\n### <nazwa>(<sygnatura>)\n<jednozdaniowy opis po angielsku>\n>>> from lab import <nazwa>\n>>> <krotkie wywolanie>\n<dokladny wynik REPL, znak po znaku>\nWymagania: co najmniej 27 przykladow '>>>' lacznie; wyniki przelicz RECYTYWNIE z kodu zrodlowego (listy wypisuje sie w apostrofach, dict w kolejnosci wstawienia).\nKOD ZRODLOWY src/lab/__init__.py:\n```python\n{existing}\n```\n",
+        "test_file": "src/lab/api_docs.py",
+        "test_import": "import lab.api_docs",
+        "test_lines": [
+            'import doctest',
+            'import lab',
+            'res = doctest.testmod(lab.api_docs, verbose=False)',
+            "assert res.failed == 0, 'doctest faili: %d' % res.failed",
+            "assert res.attempted >= 27, 'za malo przykladow: %d' % res.attempted",
+            "src = open('src/lab/api_docs.py', encoding='utf-8').read()",
+            'missing = [n for n in lab.__all__ if n not in src]',
+            "assert not missing, 'nieudokumentowane funkcje: %s' % missing",
+            "assert '>>>' in src, 'brak doctest doctestow'",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+    "compress-stats": {
+        "spec_file": "specs/compress.md",
+        "branch": "feat/compress-stats",
+        "prompt_core": (
+            "byte_histogram w tym jednym pliku (def byte_histogram(data) -> dict), "
+            "dodaj nazwe do __all__. DODAJ TYLKO TE JEDNA funkcje byte_histogram "
+            "(FUNKCJE rle_encode/rle_decode sa OSOBNYMI zadaniami — NIE dodawaj "
+            "ich teraz). Wejscie bytes/bytearray (str => TypeError). "
+            "Zwraca dict: klucz = wartosc bajtu (int 0..255) kazdego OBECNEGO "
+            "bajtu, wartosc = liczba wystapien (>=1); nieobecne bajty NIE maja "
+            "klucza. Puste wejscie => {}. Algorytm DOSLOWNIE:\\n"
+            "```\\n"
+            "if isinstance(data, str): raise TypeError\\n"
+            "out = {}\\n"
+            "for b in data:\\n"
+            "    out[b] = out.get(b, 0) + 1\\n"
+            "return out\\n"
+            "```\\n"
+            "sum(wartosci) == len(data). OSTATNIA linia zwracanego pliku MUSI "
+            "byc doslownie print('ALL SPEC TESTS PASSED') — bez tego walidacja "
+            "odrzuca prace."
+        ),
+        "test_file": "tests/test_compress_stats.py",
+        "test_import": "from lab import byte_histogram",
+        "test_lines": [
+            "assert byte_histogram(b'') == {}, 'empty'",
+            "assert byte_histogram(b'aaa') == {97: 3}, 'single run'",
+            "assert byte_histogram(b'abca') == {97: 2, 98: 1, 99: 1}, 'counts'",
+            "assert byte_histogram(bytes([0, 255, 0])) == {0: 2, 255: 1}, 'edge bytes'",
+            "assert byte_histogram(bytearray(b'xyz')) == byte_histogram(b'xyz'), 'bytearray same as bytes'",
+            "assert sum(byte_histogram(b'hello compress').values()) == 14, 'sum == len'",
+            "try:",
+            "    byte_histogram('abc'); raise SystemExit('no TypeError for str')",
+            "except TypeError:",
+            "    pass",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+    "compress-encode": {
+        "spec_file": "specs/compress.md",
+        "branch": "feat/compress-encode",
+        "prompt_core": (
+            "rle_encode w tym jednym pliku (def rle_encode(data) -> bytes), "
+            "dodaj nazwe do __all__. Wejscie bytes/bytearray (str => TypeError). "
+            "RLE zachlanne: kazdy maksymalny run identycznych bajtow -> para "
+            "(count, value); run dluzszy niz 255 dzielony na kolejne pary. "
+            "Puste wejscie => b''. Algorytm DOSLOWNIE:\\n"
+            "```\\n"
+            "if isinstance(data, str): raise TypeError\\n"
+            "out = bytearray()\\n"
+            "i = 0\\n"
+            "while i < len(data):\\n"
+            "    v = data[i]\\n"
+            "    j = i\\n"
+            "    while j < len(data) and data[j] == v and j - i < 255:\\n"
+            "        j += 1\\n"
+            "    out += bytes([j - i, v])\\n"
+            "    i = j\\n"
+            "return bytes(out)\\n"
+            "```\\n"
+            "b'a'*300 => bytes([255, 97, 45, 97]). Wynik zawsze parzystej "
+            "dlugosci. OSTATNIA linia zwracanego pliku MUSI byc doslownie "
+            "print('ALL SPEC TESTS PASSED') — bez tego walidacja odrzuca prace."
+        ),
+        "test_file": "tests/test_compress_encode.py",
+        "test_import": "from lab import rle_encode",
+        "test_lines": [
+            "assert rle_encode(b'') == b'', 'empty'",
+            "assert rle_encode(b'a') == bytes([1, 97]), 'single byte'",
+            "assert rle_encode(b'aaabbc') == bytes([3, 97, 2, 98, 1, 99]), 'basic runs'",
+            "assert rle_encode(b'a' * 300) == bytes([255, 97, 45, 97]), 'run > 255 split'",
+            "assert rle_encode(b'a' * 255) == bytes([255, 97]), 'exactly 255'",
+            "assert rle_encode(b'a' * 256) == bytes([255, 97, 1, 97]), '256 split'",
+            "assert rle_encode(bytes([0, 0, 0])) == bytes([3, 0]), 'zero byte value'",
+            "assert len(rle_encode(bytes(range(256)))) == 512, 'no runs -> all pairs'",
+            "try:",
+            "    rle_encode('aaa'); raise SystemExit('no TypeError for str')",
+            "except TypeError:",
+            "    pass",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+    "compress-decode": {
+        "spec_file": "specs/compress.md",
+        "branch": "feat/compress-decode",
+        "prompt_core": (
+            "rle_decode w tym jednym pliku (def rle_decode(enc) -> bytes), "
+            "dodaj nazwe do __all__. Wejscie bytes/bytearray (str => TypeError). "
+            "Pary (count, value): kazda para rozwijana do value*count bajtow, "
+            "sklejone. Nieparzysta dlugosc => ValueError; count == 0 => "
+            "ValueError. Algorytm DOSLOWNIE:\\n"
+            "```\\n"
+            "if isinstance(enc, str): raise TypeError\\n"
+            "if len(enc) % 2: raise ValueError('odd length')\\n"
+            "out = bytearray()\\n"
+            "for i in range(0, len(enc), 2):\\n"
+            "    c = enc[i]\\n"
+            "    if c == 0: raise ValueError('zero count')\\n"
+            "    out += bytes([enc[i + 1]]) * c\\n"
+            "return bytes(out)\\n"
+            "```\\n"
+            "KONTRAKT round-trip: rle_decode(rle_encode(x)) == x (rle_encode "
+            "juz istnieje w pliku — nie zmieniaj go). OSTATNIA linia "
+            "zwracanego pliku MUSI byc doslownie print('ALL SPEC TESTS "
+            "PASSED') — bez tego walidacja odrzuca prace."
+        ),
+        "test_file": "tests/test_compress_decode.py",
+        "test_import": "from lab import rle_decode, rle_encode",
+        "test_lines": [
+            "assert rle_decode(b'') == b'', 'empty'",
+            "assert rle_decode(bytes([3, 97])) == b'aaa', 'single pair'",
+            "assert rle_decode(bytes([255, 97, 45, 97])) == b'a' * 300, 'split runs join'",
+            "assert rle_decode(bytes([2, 0])) == bytes([0, 0]), 'zero value byte'",
+            "try:",
+            "    rle_decode(b'aaa'); raise SystemExit('no ValueError odd len')",
+            "except ValueError:",
+            "    pass",
+            "try:",
+            "    rle_decode(bytes([0, 97])); raise SystemExit('no ValueError count 0')",
+            "except ValueError:",
+            "    pass",
+            "for data in (b'hello world, hello compress!', bytes(range(256)), b'\\x00' * 1000):",
+            "    assert rle_decode(rle_encode(data)) == data, 'round-trip failed'",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+    "reporting-module": {
+        "spec_file": "specs/reporting-module.md",
+        "branch": "feat/reporting-module",
+        "prompt_head": (
+            "Zrealizuj zadanie MOVE-REFACTOR opisane specyfikacja. Zwroc DOKLADNIE DWA bloki kodu "
+            "w markdown (```python ... ```), zaden tekst poza nimi. Kazdy blok zaczyna sie PIERWSZA linia "
+            "dokladnie '# FILE: <sciezka>'. Blok 1 = pelna nowa zawartosc src/lab/__init__.py. "
+        ),
+        "prompt_core": (
+            "MOVE-REFACTOR: przenies 3 funkcje raportowe (git_log_json, report_aggregate, report_render) "
+            "z src/lab/__init__.py do NOWEGO modulu src/lab/reporting.py. W __init__.py USUN "
+            "definicje tych funkcji i zaraz po __all__ dodaj linie: "
+            "from lab.reporting import git_log_json, report_aggregate, report_render. "
+            "__all__ bez zmian. Test tests/test_reporting.py NIE przechodzi (ModuleNotFoundError). "
+            "WAZNE: to musi byc RE-EXPORT tej samej funkcji (lab.git_log_json IS lab.reporting.git_log_json), "
+            "nie kopia definicji. src/lab/pipeline.py zostaje BEZ ZMIAN (dziala przez re-export). "
+            "Wszystkie istniejace testy musza nadal przechodzic."
+        ),
+        "prompt_tail": (
+            "Blok 2 = pelna zawartosc NOWEGO modulu src/lab/reporting.py z tymi 3 funkcjami "
+            "skopiowanymi DOKLADNIE 1:1 z ponizszego pliku:\n"
+            "```python\n{existing}\n```\n"
+            "SPECYFIKACJA:\n{spec}"
+        ),
+
+        "test_lines": [
+            'import sys',
+            "sys.path.insert(0, 'src')",
+            'import lab',
+            'import lab.reporting as reporting',
+            'from lab.pipeline import commit_report',
+            '',
+            '# re-export identity (nie kopia!)',
+            "assert lab.git_log_json is reporting.git_log_json, 'identity git_log_json'",
+            "assert lab.report_aggregate is reporting.report_aggregate, 'identity report_aggregate'",
+            "assert lab.report_render is reporting.report_render, 'identity report_render'",
+            '',
+            "LOG = 'h1|2026-10-01|feat: x\\nh2|2026-10-01|fix: y'",
+            "assert reporting.git_log_json(LOG)[0]['hash'] == 'h1'",
+            "assert reporting.report_render({'total': 0, 'by_type': {}, 'by_date': {}}, 'text') == 'Commit Report\\n\\nTotal: 0\\n\\nBy type\\n\\nBy date\\n'",
+            "assert commit_report(LOG, 'text').startswith('Commit Report'), 'pipeline przez re-export'",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+        "test_file": "tests/test_reporting.py",
+        "test_import": "import lab.reporting",
+        "existing_test": True,
+    },
+    "csv-table": {
+        "spec_file": "specs/csv-table.md",
+        "branch": "feat/csv-table",
+        "prompt_head": (
+            "Zrealizuj zadanie opisane specyfikacja. Zwroc DOKLADNIE JEDEN blok kodu "
+            "w markdown (```python ... ```) z pelna zawartoscia pliku src/lab/__init__.py. "
+            "Zaden tekst poza blokiem. PIERWSZA linia bloku NIE moze zawierac '# FILE:'. "
+        ),
+        "prompt_core": (
+            "Dodaj do src/lab/__init__.py na KONCU pliku dwie funkcje: csv_to_table oraz "
+            "_csv_split, DOKLADNIE wg pseudokodu ze specyfikacji (sekcja Implementacja). "
+            "Zachowaj wszystkie istniejace funkcje bez zadnych zmian. "
+            "Test tests/test_csv_table.py NIE przechodzi na obecnym kodzie (brak csv_to_table). "
+            "Wszystkie inne testy musza przechodzic."
+        ),
+        "prompt_tail": (
+            "AKTUALNA zawartosc src/lab/__init__.py do modyfikacji:\n"
+            "```python\n{existing}\n```\n"
+            "SPECYFIKACJA:\n{spec}"
+        ),
+        "test_lines": [
+            '',
+            'CSV = \'name,amount\\nalice,"1,000"\\nbob,"say ""hi"""\\ncarol,3\\n\'',
+            '',
+            '# Markdown',
+            'md = csv_to_table(CSV)',
+            'assert md == (',
+            "    '| name | amount |\\n'",
+            "    '|---|---|'",
+            "    '\\n| alice | 1,000 |'",
+            '    \'\\n| bob | say "hi" |\'',
+            "    '\\n| carol | 3 |'",
+            '), repr(md)',
+            '',
+            '# HTML',
+            "html = csv_to_table(CSV, 'html')",
+            "assert '<table>' in html and html.startswith('<table>')",
+            "assert '<th>name</th><th>amount</th>' in html, repr(html)",
+            "assert '<td>alice</td><td>1,000</td>' in html",
+            'assert \'<td>bob</td><td>say "hi"</td>\' in html',
+            "assert html.rstrip().endswith('</table>')",
+            '',
+            '# domyslny fmt = md',
+            "assert csv_to_table(CSV) == csv_to_table(CSV, 'md')",
+            '',
+            '# brak naglowka w html -> th w pierwszym wierszu, td dalej',
+            "assert html.count('<th>') == 2 and html.count('<td>') == 6",
+            '',
+            '# wyjatki',
+            'try:',
+            "    csv_to_table('a,b\\n1,2,3\\n', 'md')",
+            "    raise SystemExit('FAIL: no ValueError')",
+            'except ValueError as e:',
+            "    assert 'Inconsistent' in str(e), str(e)",
+            'try:',
+            "    csv_to_table('\\n \\n', 'md')",
+            "    raise SystemExit('FAIL: no ValueError')",
+            'except ValueError as e:',
+            "    assert 'Empty' in str(e), str(e)",
+            'try:',
+            "    csv_to_table('a\\n1\\n', 'pdf')",
+            "    raise SystemExit('FAIL: no ValueError')",
+            'except ValueError as e:',
+            "    assert 'Unknown format' in str(e), e",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+        "test_file": "tests/test_csv_table.py",
+        "test_import": "from lab import csv_to_table",
+        "existing_test": True,
+    },
+    "rolling-fast": {
+        "spec_file": "specs/rolling-fast.md",
+        "branch": "feat/rolling-fast",
+        "prompt_head": (
+            "Zrealizuj zadanie REFACTOR opisane specyfikacja. Zwroc DOKLADNIE JEDEN blok kodu "
+            "w markdown (\u0060\u0060\u0060python ... \u0060\u0060\u0060) z pelna zawartoscia pliku src/lab/__init__.py. "
+            "Zaden tekst poza blokiem. PIERWSZA linia bloku NIE moze zawierac '# FILE:'. "
+        ),
+        "prompt_core": (
+            "W src/lab/__init__.py zastap funkcje rolling_mean implementacja O(n) (sliding window, "
+            "biezaca suma) DOKLADNIE wg pseudokodu ze specyfikacji. Zachowaj identyczne zachowanie: "
+            "te same wyniki, ten sam wyjatek ValueError('Invalid window size') przy window<1 lub "
+            "window>len(values), ten sam podpis (values: list[float], window: int) -> list[float]. "
+            "Pozostale funkcje w pliku: skopiuj DOKLADNIE 1:1 bez zadnych zmian. "
+            "Test tests/test_rolling_fast.py NIE przechodzi (za wolno na obecnym kodzie). "
+            "Wszystkie inne testy musza przechodzic."
+        ),
+        "prompt_tail": (
+            "AKTUALNA zawartosc src/lab/__init__.py do modyfikacji:\n"
+            "```python\n{existing}\n```\n"
+            "SPECYFIKACJA:\n{spec}"
+        ),
+
+        "test_lines": [
+            'import sys, time',
+            "sys.path.insert(0, 'src')",
+            'from lab import rolling_mean',
+            '',
+            '# rownowaznosc na danych calkowitych (refactor bez regresji)',
+            "assert rolling_mean([1, 2, 3, 4], 2) == [1.5, 2.5, 3.5], 'equivalence basic'",
+            "assert rolling_mean([5], 1) == [5.0], 'window=1'",
+            "assert rolling_mean([1, 2, 3], 3) == [2.0], 'window=len'",
+            "assert rolling_mean([-2, -1, 0, 1, 2], 2) == [-1.5, -0.5, 0.5, 1.5], 'negatives'",
+            'data = list(range(1, 20001))',
+            'w = 7',
+            'r = rolling_mean(data, w)',
+            "assert abs(r[0] - sum(data[:w]) / w) < 1e-9, 'first window'",
+            "assert abs(r[-1] - sum(data[-w:]) / w) < 1e-9, 'last window'",
+            "assert len(r) == len(data) - w + 1, 'length'",
+            '',
+            '# wydajnosc: O(n*w) na tym wejscu potrzebowaloby ~minut; O(n) < 2 s',
+            'big = list(range(1000000))',
+            't0 = time.monotonic()',
+            'rb = rolling_mean(big, 500000)',
+            'dt = time.monotonic() - t0',
+            "assert len(rb) == 500001, 'big length'",
+            "assert dt < 2.0, 'runtime %.2fs — za wolno (O(n*w)?)' % dt",
+            "print('ALL SPEC TESTS PASSED (%.2fs)' % dt)",
+        ],
+        "test_file": "tests/test_rolling_fast.py",
+        "test_import": "from lab import rolling_mean",
+        "existing_test": True,
+    },
+    "pipeline-style": {
+        "spec_file": "specs/pipeline-style.md",
+        "test_import": "from lab.pipeline import commit_report",
+        "branch": "feat/pipeline-style",
+        "prompt_head": (
+            "Zrealizuj zadanie CROSS-FILE-REFACTOR opisane specyfikacja. Zwroc DOKLADNIE DWA bloki kodu "
+            "w markdown (```python ... ```), zaden tekst poza nimi. Kazdy blok zaczyna sie PIERWSZA linia "
+            "dokladnie '# FILE: <sciezka>' (src/lab/__init__.py i src/lab/pipeline.py). "
+            "Blok 1 = pelna nowa zawartosc src/lab/__init__.py. "
+        ),
+        "prompt_tail": (
+            "Blok 2 = pelna zawartosc NOWEGO modulu src/lab/pipeline.py. "
+            "PLIK src/lab/__init__.py ZAWIERA JUZ FUNKCJE PONIZEJ — w bloku 1 skopiuj je DOKLADNIE 1:1 "
+            "bez najmniejszej zmiany, zmien tylko report_render i dodaj niczego nie usuwajac:\n"
+            "```python\n{existing}\n```\n"
+            "SPECYFIKACJA:\n{spec}"
+        ),
+        "existing_test": True,
+        "prompt_core": (
+            "CROSS-FILE-REFACTOR: spec specs/pipeline-style.md wymaga zmiany "
+            "kontraktu: report_render(summary, style='md') w src/lab/__init__.py "
+            "dostaje nowy parametr style ('md' default = dotychczasowe "
+            "wyjscie; 'text' = naglowki bez '#'; inny -> ValueError). "
+            "DODATKOWO stworz nowy modul src/lab/pipeline.py z funkcja "
+            "commit_report(log_text, style='md') ktora wywoluje pipeline: "
+            "git_log_json -> report_aggregate -> report_render(summary, style). "
+            "Test tests/test_pipeline.py NIE przechodzi (ModuleNotFoundError). "
+            "Zaktualizuj implementacje i dodaj caller SPOJNIE jednym patchem. "
+            "PLIKU TESTU NIE ZMIENIAJ. Wszystkie istniejace testy musza nadal "
+            "przechodzic (backward compat). Pseudokod w specu jest literalny."
+        ),
+        "test_file": "tests/test_pipeline.py",
+        "test_lines": [
+            'import sys',
+            "sys.path.insert(0, 'src')",
+            'from lab import report_render',
+            'from lab.pipeline import commit_report',
+            '',
+            "LOG = 'h1|2026-10-01|feat: x\\nh2|2026-10-01|fix: y'",
+            "summary = {'total': 2, 'by_type': {'feat': 1, 'fix': 1}, 'by_date': {'2026-10-01': 2}}",
+            '',
+            "assert commit_report(LOG) == report_render(summary), 'pipeline md == report_render md'",
+            "expected_text = 'Commit Report\\n\\nTotal: 2\\n\\nBy type\\n\\n- feat: 1\\n- fix: 1\\n\\nBy date\\n\\n- 2026-10-01: 2\\n'",
+            "assert commit_report(LOG, 'text') == expected_text, 'text style'",
+            "assert commit_report(LOG, 'md') == report_render(summary), 'explicit md'",
+            '# report_render text-style bezposrednio',
+            "assert report_render(summary, 'text') == expected_text, 'report_render text'",
+            '# nieznany styl',
+            'try:',
+            "    report_render(summary, 'bogus'); raise SystemExit('no ValueError for bogus style')",
+            'except ValueError:',
+            '    pass',
+            'try:',
+            "    commit_report(LOG, 'bogus'); raise SystemExit('no ValueError for bogus style (pipeline)')",
+            'except ValueError:',
+            '    pass',
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+    "repair-state": {
+        "spec_file": "specs/repair-state.md",
+        "test_import": "from lab import append_event",
+        "branch": "feat/repair-state",
+        "existing_test": True,
+        "prompt_core": (
+            "SELFSATISFIABLE-REPAIR: w repo jest funkcja append_event w "
+            "src/lab/__init__.py z bugiem (stan przecieka miedzy wyolaniami). "
+            "Test tests/test_append_event.py NIE przechodzi — przeczytaj go, "
+            "zdiagnozuj ROOT CAUSE w implementacji i napraw implementacje. "
+            "PLIKU TESTU NIE ZMIENIAJ. Diagnoza: mutable default argument "
+            "jest wspoldzielony. Fix: log=None + log = list(log or []). "
+            "Dodaj tylko naprawiona implementacje."
+        ),
+        "test_file": "tests/test_append_event.py",
+        "test_lines": [
+            "import sys",
+            "sys.path.insert(0, 'src')",
+            "from lab import append_event",
+            "assert append_event('a') == ['a'], 'first call'",
+            "assert append_event('b') == ['b'], 'state leaked between calls'",
+            "assert append_event('x', ['a']) == ['a', 'x'], 'explicit log'",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+    "repair-balanced": {
+        "spec_file": "specs/repair-balanced.md",
+        "branch": "feat/repair-balanced",
+        "existing_test": True,
+        "prompt_core": (
+            "SELFSATISFIABLE-REPAIR: w repo jest funkcja is_balanced w "
+            "src/lab/__init__.py z bugiem. Test tests/test_is_balanced.py "
+            "NIE przechodzi. Znajdz root cause, napraw implementacje "
+            "is_balanced w src/lab/__init__.py. Zakaz modyfikacji "
+            "tests/test_is_balanced.py i kazdego innego pliku poza "
+            "src/lab/__init__.py. Kontrakt: True gdy () [] {} poprawnie "
+            "zbalansowane I poprawnie zagniezdzone (zamykanie w kolejnosci "
+            "odwrotnej do otwierania, typy musza sie zgadzac). Zamkniecie "
+            "bez otwarcia => False nawet gdy licznik sie wyrówna. "
+            "Algorytm: stos otwartych nawiasow; przy zamknieciu wierzcholek "
+            "stosu musi byc tego samego rodzaju; pusty stos przy zamknieciu "
+            "=> False; na koncu stos pusty. Wymagane podejscie diagnostyczne: "
+            "(1) odtworz failure lokalnie, (2) zidentyfikuj root cause, "
+            "(3) dopiero wtedy popraw. OSTATNIA linia zwracanego pliku MUSI "
+            "byc doslownie print('ALL SPEC TESTS PASSED') — bez tego "
+            "walidacja odrzuca prace."
+        ),
+        "test_file": "tests/test_is_balanced.py",
+        "test_import": "from lab import is_balanced",
+        "test_lines": [
+            "assert is_balanced('') is True, 'empty'",
+            "assert is_balanced('()') is True, 'simple'",
+            "assert is_balanced('([]{})') is True, 'nested ok'",
+            "assert is_balanced('([)]') is False, 'crossed — the bug'",
+            "assert is_balanced(')(') is False, 'close before open'",
+            "assert is_balanced('(') is False, 'unclosed'",
+            "assert is_balanced(')') is False, 'unopened'",
+            "assert is_balanced('a(b[c]d)e') is True, 'ignore other chars'",
+            "assert is_balanced('{[()]}') is True, 'deep nest'",
+            "assert is_balanced('(()') is False, 'extra open'",
+            "assert is_balanced('([)}') is False, 'crossed 2'",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+    "multi-repair": {
+        "spec_file": "specs/multi-repair.md",
+        "branch": "feat/multi-repair",
+        "existing_test": True,
+        "prompt_core": (
+            "SELFSATISFIABLE-REPAIR: w src/lab/__init__.py TRZY istniejace "
+            "funkcje — top_lines, word_counts, append_event — zawieraja po "
+            "JEDNYM subtelnym bugu. Test tests/test_multi_repair.py NIE "
+            "przechodzi: dokladnie trzy asercje, po jednej na kazda funkcje. "
+            "To zadanie CZYSTO DIAGNOSTYCZNE, bez podanego pseudokodu: "
+            "(1) odtworz kazdy failure lokalnie, (2) zidentyfikuj ROOT CAUSE "
+            "w implementacji (dokladna linia i mechanizm), (3) dopiero wtedy "
+            "napraw. Zakaz modyfikacji plikow w tests/ i kazdego pliku poza "
+            "src/lab/__init__.py. Nie dodawaj nowych funkcji — napraw "
+            "istniejace tak, aby WSZYSTKIE testy repo przechodzily. "
+            "OSTATNIA linia zwracanego pliku MUSI byc doslownie "
+            "print('ALL SPEC TESTS PASSED') — bez tego walidacja odrzuca "
+            "prace."
+        ),
+        "test_file": "tests/test_multi_repair.py",
+        "test_import": "from lab import top_lines, word_counts, append_event",
+        "test_lines": [
+            "import sys",
+            "sys.path.insert(0, 'src')",
+            "from lab import top_lines, word_counts, append_event",
+            "",
+            "# top_lines: '#' liczy bonus wszedzie, nie tylko '# ' (C#, ###compact bez spacji)",
+            "assert top_lines('plain text line\\nC# and dotnet', 1) == ['C# and dotnet'], 'hash anywhere counts'",
+            "# word_counts: caly leading run znakow non-alnum jest usuwany",
+            "assert word_counts('__hello__') == {'hello': 1}, 'strip whole leading non-alnum run'",
+            "# append_event: przekazany log NIE moze byc mutowany w miejscu",
+            "src = ['a']",
+            "result = append_event('x', src)",
+            "assert src == ['a'], 'input log must not be mutated'",
+            "assert result == ['a', 'x'], 'returns new list with event'",
+            '',
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+    "disp-width": {
+        "spec_file": "specs/disp-width.md",
+        "branch": "feat/disp-width",
+        "prompt_head": "Zrealizuj zadanie opisane specyfikacja. Zwroc DOKLADNIE JEDEN blok kodu w markdown (```python ... ```) z pelna zawartoscia pliku src/lab/__init__.py. Zaden tekst poza blokiem. PIERWSZA linia bloku NIE moze zawierac '# FILE:'. ",
+        "prompt_core": "Dodaj do src/lab/__init__.py funkcje disp_width, DOKLADNIE wg pseudokodu ze specyfikacji (sekcja Implementacja). Zachowaj wszystkie istniejace funkcje bez zadnych zmian. Linia print('ALL SPEC TESTS PASSED') musi pozostac OSTATNIA linia pliku — umiesc disp_width bezposrednio przed nia.",
+        "prompt_tail": "AKTUALNA zawartosc src/lab/__init__.py do modyfikacji:\n```python\n{existing}\n```\nSPECYFIKACJA:\n{spec}",
+        "existing_test": True,
+        "test_file": "tests/test_disp_width.py",
+        "test_import": "from lab import disp_width",
+        "test_lines": [
+            "import sys",
+            "sys.path.insert(0, 'src')",
+            "from lab import disp_width",
+            "",
+            "# disp_width: combining=0, CJK (W/F)=2, reszta=1",
+            "assert disp_width('hello') == 5",
+            "assert disp_width('') == 0",
+            "assert disp_width('hé') == 2, 'latin-1 accent = 1 kolumna'",
+            "assert disp_width('你好') == 4, 'CJK = 2 kolumny kazdy'",
+            "assert disp_width('e\\u0301') == 1, 'combining mark = 0'",
+            "assert disp_width('a🚀b') == 4, 'emoji (W) = 2 kolumny'",
+            "assert disp_width('C# code') == 7",
+            "assert disp_width('a\\u0301\\u0301') == 1, 'dwa combining marks = 0'",
+            "assert disp_width('Ａ') == 2, 'fullwidth latin (F) = 2'",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+    "delta-codec": {
+        "spec_file": "specs/delta-codec.md",
+        "branch": "feat/delta-codec",
+        "prompt_head": "Zrealizuj zadanie opisane specyfikacja. Zwroc DOKLADNIE JEDEN blok kodu w markdown (```python ... ```) z pelna zawartoscia pliku src/lab/__init__.py. Zaden tekst poza blokiem. PIERWSZA linia bloku NIE moze zawierac '# FILE:'. ",
+        "prompt_core": "Dodaj do src/lab/__init__.py funkcje delta_encode i delta_decode, DOKLADNIE wg pseudokodu ze specyfikacji (sekcja Implementacja). Zachowaj wszystkie istniejace funkcje bez zadnych zmian. Linia print('ALL SPEC TESTS PASSED') musi pozostac OSTATNIA linia pliku — umiesc nowe funkcje bezposrednio przed nia.",
+        "prompt_tail": "AKTUALNA zawartosc src/lab/__init__.py do modyfikacji:\\n```python\\n{existing}\\n```\\nSPECYFIKACJA:\\n{spec}",
+        "existing_test": True,
+        "test_file": "tests/test_delta_codec.py",
+        "test_import": "from lab import delta_encode, delta_decode",
+        "test_lines": [
+            "import sys",
+            "sys.path.insert(0, 'src')",
+            "from lab import delta_encode, delta_decode",
+            "import random",
+            "",
+            "rng = random.Random(20261004)",
+            "",
+            "# property: decode(encode(x)) == x, 500 losowych sekwencji",
+            "for _ in range(500):",
+            "    n = rng.randint(0, 40)",
+            "    xs = [rng.randint(-1000, 1000) for _ in range(n)]",
+            "    assert delta_decode(delta_encode(xs)) == xs, 'round-trip fail'",
+            "",
+            "assert delta_encode([]) == []",
+            "assert delta_decode([]) == []",
+            "assert delta_encode([5, 3, 10, 10]) == [5, -2, 7, 0]",
+            "assert delta_decode([5, -2, 7, 0]) == [5, 3, 10, 10]",
+            "",
+            "# property: zgodnosc dlugosci",
+            "for _ in range(100):",
+            "    n = rng.randint(0, 20)",
+            "    xs = [rng.randint(-50, 50) for _ in range(n)]",
+            "    assert len(delta_encode(xs)) == len(xs), 'len mismatch'",
+            "",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+    "template": {
+        "spec_file": "specs/template.md",
+        "feature_name": "template",
+        "branch": "feat/template",
+        "prompt_head": "Zrealizuj zadanie opisane specyfikacja. Zwroc DOKLADNIE JEDEN blok kodu w markdown (```python ... ```) z pelna zawartoscia pliku src/lab/__init__.py. Zaden tekst poza blokiem. PIERWSZA linia bloku NIE moze zawierac '# FILE:'. ",
+        "prompt_core": "Dodaj do src/lab/__init__.py klase Template ( konstruktor Template(source), metoda render(ctx) ) DOKLADNIE wg kontraktu ze specyfikacji i tests/test_template.py. Zachowaj wszystkie istniejace funkcje bez zadnych zmian. Linia print('ALL SPEC TESTS PASSED') musi pozostac OSTATNIA linia pliku — umiesc klase bezposrednio przed nia. Tresc specyfikacji jest celowo minimalna: sam podejmij otwarte decyzje projektowe i UDOKUMENTUJ je w docstringu klasy Template.",
+        "prompt_tail": "AKTUALNA zawartosc src/lab/__init__.py do modyfikacji:\\n```python\\n{existing}\\n```\\nSPECYFIKACJA:\\n{spec}",
+        "existing_test": True,
+        "test_file": "tests/test_template.py",
+        "test_import": "from lab import Template",
+        "test_lines": [
+            "import sys",
+            "sys.path.insert(0, 'src')",
+            "from lab import Template",
+            "",
+            "# kontrakt z przykladami",
+            "assert Template('Hello {name}').render({'name': 'World'}) == 'Hello World'",
+            "assert Template('{a}+{a}={b}').render({'a': 2, 'b': 4}) == '2+2=4'",
+            "assert Template('no placeholders').render({}) == 'no placeholders'",
+            "assert Template('').render({'x': 1}) == ''",
+            "assert Template('a{{b}}c').render({}) == 'a{b}c'",
+            "assert isinstance(Template('v={v}').render({'v': [1]}), str)",
+            "",
+            "# brakujacy klucz -> KeyError",
+            "try:",
+            "    Template('{k}').render({})",
+            "    raise AssertionError('brakujacy klucz: oczekiwano KeyError')",
+            "except KeyError:",
+            "    pass",
+            "",
+            "# decyzje projektowe udokumentowane w docstringu",
+            "assert Template.__doc__ is not None and len(Template.__doc__.strip()) > 20, \\",
+            "    'docstring klasy Template musi dokumentowac decyzje projektowe'",
+            "",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
 }
