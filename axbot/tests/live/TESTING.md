@@ -35,6 +35,33 @@ Last verified: 29/09/2026 on serv2uk (k3s, substrate v0.2.0-9-gc7b54699).
   tests themselves** (each scenario restarts the unit), not crashes.
 - Egress race on apply: driver retries re-apply once ("egress race retry").
 
+## Substrate canaries (upstream google/ax regressions)
+
+`substrate_canaries.py` — non-destructive canaries for two upstream issues that
+hit our stack class directly. Run from the Hermes host (drives serv2uk over ssh):
+
+    python3 axbot/tests/live/substrate_canaries.py [--since 24h]
+
+Exit 0 = green, 1 = regression (never silent). Checks:
+
+- **#443 (Substrate >=6a35150 rejects `snapshot_config.on_resume`)**: greps
+  `ax-controller` journal for the tag-3 signature, the custom-ActorTemplate
+  fallback WARN, and the fatal `actor template not found`. On our older
+  substrate the same fallback path fires for manifest bugs we DO hit today —
+  e.g. `env[0].value: Too long: may not be more than 32768 chars`
+  (seen live 03/10: lab-expr-lex templates) and doubled registry prefix in
+  image refs (`localhost:5001/localhost:5001/...`, seen 27/09). Keep task env
+  payloads under 32 KB — ship big payloads as files fetched over HTTP, never
+  `spec.env`.
+- **#442 (Redis restart loses Task state, orphans actors)**: audit of Redis
+  durability (dump.rdb present/fresh, bgsave ok, dir on real disk) plus a
+  divergence detector comparing `ax get tasks` vs `kubectl-ate get actors
+  --all-atespaces` — an actor without a Task record is an orphan holding a
+  worker slot; also warns on tasks stuck Terminating. Our Redis is host
+  `redis-server` (RDB to /var/lib/redis, AOF off) — a restart loses at most
+  the save-interval window (saves: 1h/1, 5m/100, 1m/10k). Real orphans need
+  `kubectl-ate delete actor <name> -a <atespace> --any-state`.
+
 ## Results archive
 
 - `live-results.txt` — run #5 (pre-driver-fix): 21 pass / 6 fail (driver bug).
