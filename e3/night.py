@@ -135,13 +135,19 @@ def pick_feature(dry: bool) -> str | None:
 def preflight() -> list[str]:
     errs = []
     # Safeguard quota Z.ai NAJPIERW (plan E3 krok 4) — nie pal SSH/deplojów przy blokadzie
-    p5, wk = zai_quota()
-    if p5 < 0:
-        errs.append("quota Z.ai: brak klucza / API err — fail-safe stop")
-    elif p5 >= ZAI_5H_SKIP:
-        errs.append(f"quota Z.ai 5h = {p5}% (>= {ZAI_5H_SKIP}%) — skip nocy")
-    elif wk >= ZAI_WEEKLY_PAUSE:
-        errs.append(f"quota Z.ai weekly = { wk }% (>= {ZAI_WEEKLY_PAUSE}%) — pauza do resetu")
+    # E3_SKIP_QUOTA=1 (env, tylko jawne ręczne runy): pomija próg 5h/weekly, ale NIE err API.
+    if os.environ.get("E3_SKIP_QUOTA") == "1":
+        p5, wk = zai_quota()
+        if p5 < 0:
+            errs.append("quota Z.ai: brak klucza / API err — fail-safe stop")
+    else:
+        p5, wk = zai_quota()
+        if p5 < 0:
+            errs.append("quota Z.ai: brak klucza / API err — fail-safe stop")
+        elif p5 >= ZAI_5H_SKIP:
+            errs.append(f"quota Z.ai 5h = {p5}% (>= {ZAI_5H_SKIP}%) — skip nocy")
+        elif wk >= ZAI_WEEKLY_PAUSE:
+            errs.append(f"quota Z.ai weekly = { wk }% (>= {ZAI_WEEKLY_PAUSE}%) — pauza do resetu")
     repo = make_task.REPO
     # dirty = tylko pliki, które git chce commitować (igonruje .gitignore'd)
     porcelain = subprocess.run(["git", "-C", repo, "status", "--porcelain"],
@@ -194,16 +200,22 @@ def deploy(task_yaml_local: str, task_name: str) -> None:
     )
     ssh(f"chmod 600 {REMOTE_TPL} {REMOTE_YAML} 2>/dev/null; " + inject)
     # apply + egress (PEŁNA ŚCIEŻKA — sudo nie dziedziczy PATH) + resume
+    # egress-policy: parent Actor moze nie istniec od razu po resume (race).
+    # Retry do 12 prob co 10s; jesli actor istnieje, exit 0 i koniec petli.
+    egress_retry = (
+        "for i in $(seq 1 12); do sleep 10; "
+        "if sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml "
+        "/home/hermes/go/bin/kubectl-ate create egress-policy " + task_name +
+        " -a default -f " + EGRESS_JSON + "; then EG=0; break; else EG=1; fi; "
+        "done; [ \"$EG\" = \"0\" ] || exit 1"
+    )
     deploy_cmd = (
         "bash -lc 'ax delete task " + task_name + " 2>/dev/null; "
         "ax apply -f " + REMOTE_YAML + " && "
-        "ax resume task " + task_name + " && sleep 5 && "
-        "sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml "
-        "/home/hermes/go/bin/kubectl-ate create egress-policy " + task_name +
-        " -a default -f " + EGRESS_JSON + " && "
+        "ax resume task " + task_name + " && " + egress_retry + " && "
         "ax resume task " + task_name + "'"
     )
-    ssh(deploy_cmd, timeout=300)
+    ssh(deploy_cmd, timeout=600)
 
 
 def wait_result(task_name: str, not_before: float) -> str:
