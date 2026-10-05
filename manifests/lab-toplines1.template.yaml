@@ -83,7 +83,7 @@ spec:
                         "n > liczba kandydatow -> wszystkie; n <= 0 -> ValueError; wynik w kolejnosci wystepowania. "
                         "SPECYFIKACJA:\n" + spec)
               body = json.dumps({"contents":[{"role":"user","parts":[{"text":PROMPT}]}],
-                                 "generationConfig":{"temperature":0.2,"maxOutputTokens":4096}}).encode()
+                                 "generationConfig":{"temperature":0.2,"maxOutputTokens":16384}}).encode()
               url = ("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key="
                      + os.environ["GEMINI_API_KEY"])
               answer = ""
@@ -111,14 +111,37 @@ spec:
               raw_tail = answer[-1500:]
 
               # 4) ekstrakcja blokow -> pliki
+              # multi-file: gdy pierwszy blok ma naglowek "# FILE: <path>", kazdy blok
+              # zapisujemy do wskazanego pliku (wyłącznie src/); inaczej tryb single-file
               blocks = re.findall(r"```(?:python)?\s*\n(.*?)```", answer, re.S)
               if len(blocks) < 1:
                   raise RuntimeError(f"expected 1 code block, got {len(blocks)}; head=" + answer[:400])
-              src_code = blocks[0].strip() + "\n"
-              src_path = os.path.join(repo, "src", "lab", "__init__.py")
-              old_src = open(src_path, encoding="utf-8").read() if os.path.exists(src_path) else ""
-              os.makedirs(os.path.dirname(src_path), exist_ok=True)
-              open(src_path, "w", encoding="utf-8").write(src_code)
+              if re.search(r"^#\s*FILE:\s*\S+", blocks[0], re.M):
+                  writes = []
+                  for b in blocks:
+                      fm = re.search(r"^#\s*FILE:\s*(\S+)", b, re.M)
+                      if not fm:
+                          raise RuntimeError("multi-file blok bez naglowka # FILE: " + b[:120])
+                      rel = fm.group(1)
+                      if not rel.startswith("src/"):
+                          raise RuntimeError("sciezka poza src/: " + rel)
+                      code = b[fm.end():].strip() + "\n"
+                      writes.append((rel, code))
+                  d1 = []
+                  for rel, code in writes:
+                      full = os.path.join(repo, rel)
+                      old_f = open(full, encoding="utf-8").read() if os.path.exists(full) else ""
+                      os.makedirs(os.path.dirname(full), exist_ok=True)
+                      open(full, "w", encoding="utf-8").write(code)
+                      d1 += list(difflib.unified_diff(old_f.splitlines(True), code.splitlines(True),
+                              "a/" + rel, "b/" + rel))
+              else:
+                  src_code = blocks[0].strip() + "\n"
+                  src_path = os.path.join(repo, "src", "lab", "__init__.py")
+                  old_src = open(src_path, encoding="utf-8").read() if os.path.exists(src_path) else ""
+                  os.makedirs(os.path.dirname(src_path), exist_ok=True)
+                  open(src_path, "w", encoding="utf-8").write(src_code)
+                  d1 = None  # single-file: diff liczony w kroku 7
 
               # 5) deterministyczne testy wlasne (zgodne ze spec), pisane przez skrypt
               test_code = "\n".join([
@@ -152,8 +175,9 @@ spec:
               if not t or t.returncode != 0:
                   raise RuntimeError("tests failed in sandbox")
 
-              # 7) unified diff (bez git w sandboxie)
-              d1 = list(difflib.unified_diff(old_src.splitlines(True), src_code.splitlines(True),
+              # 7) unified diff (bez git w sandboxie); multi-file policzony w kroku 4
+              if d1 is None:
+                  d1 = list(difflib.unified_diff(old_src.splitlines(True), src_code.splitlines(True),
                         "a/src/lab/__init__.py", "b/src/lab/__init__.py"))
               d2 = list(difflib.unified_diff([], test_code.splitlines(True),
                         "a/tests/test_top_lines.py", "b/tests/test_top_lines.py"))
@@ -166,7 +190,7 @@ spec:
           payload = json.dumps({
               "task": "lab-toplines1", "status": status,
               "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-              "answer": answer[:8000], "patch": patch[:30000],
+              "answer": answer[:20000], "patch": patch[:30000],
               "tests_out": tests_out[:2000], "raw_tail": raw_tail[:3000],
           }, ensure_ascii=False).encode()
           req = urllib.request.Request(RECEIVER, data=payload, headers={"Content-Type": "application/json"})

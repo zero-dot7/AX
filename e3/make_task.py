@@ -37,7 +37,9 @@ def render(feature_name: str, repo: str = REPO) -> str:
     spec_path = os.path.join(repo, f["spec_file"])
     spec = open(spec_path, encoding="utf-8").read()
 
-    prompt = PROMPT_HEAD + f["prompt_core"] + PROMPT_TAIL.format(
+    head = f.get("prompt_head", PROMPT_HEAD)
+    tail = f.get("prompt_tail", PROMPT_TAIL)
+    prompt = head + f["prompt_core"] + tail.format(
         spec=spec,
         existing=open(os.path.join(repo, "src/lab/__init__.py"),
                       encoding="utf-8").read(),
@@ -73,6 +75,28 @@ def render(feature_name: str, repo: str = REPO) -> str:
     out = out.replace('"cd {repo} && python3 tests/' + f["test_file"].split("/")[-1] + '"',
                       '"cd {repo} && for t in tests/test_*.py; do python3 $t || exit 1; done"')
     out = out.replace('"--- feat/top-lines\\n"', f'"--- {f["branch"]}\\n"')
+
+    # Zadania typu "answer_path": blok odpowiedzi agenta trafia do innego
+    # pliku niz src/lab/__init__.py (np. plik testowy); test_lines harnessu
+    # zapisujemy jako bramke w osobnym pliku (nie trafia do patcha).
+    ans = f.get("answer_path")
+    if ans:
+        gate = f.get("gate_file", "tests/test_zz_spec_gate.py")
+        out = out.replace(
+            'src_path = os.path.join(repo, "src", "lab", "__init__.py")',
+            f'src_path = os.path.join(repo, "{ans}")')
+        out = out.replace(
+            'test_path = os.path.join(repo, "tests", "' + f["test_file"].split("/")[-1] + '")',
+            f'test_path = os.path.join(repo, "{gate}")')
+        out = out.replace(
+            '"a/src/lab/__init__.py", "b/src/lab/__init__.py"',
+            f'"a/{ans}", "b/{ans}"')
+        out = out.replace(' + "".join(d2)', '')
+    # Zadania typu "repair": test_file juz istnieje na main (RED by design).
+    # Nie dolaczamy diffu "utworzenia" pliku testowego (d2) do patcha —
+    # inaczej git apply --check failuje ("patch does not apply").
+    if f.get("existing_test"):
+        out = out.replace(' + "".join(d2)', '')
     return out
 
 
