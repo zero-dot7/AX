@@ -220,7 +220,7 @@ def deploy(task_yaml_local: str, task_name: str,
         f"open('{REMOTE_YAML}','w').write("
         "t.replace('__GEMINI_KEY__', key)"
         ".replace('__MODEL_PROVIDER__', '" + pc.get("provider", "gemini") + "')"
-        ".replace('__LLM_MODEL__', model)"
+        ".replace('__LLM_MODEL__', '" + model + "')"
         ".replace('__LLM_BASE_URL__', '" + pc.get("base_url", "") + "')"
         ".replace('__LLM_KEY__', key))\n"
         f"print('RENDER_OK', os.path.getsize('{REMOTE_YAML}'))\n"
@@ -286,6 +286,8 @@ def main() -> int:
                     help="gemini (punkt odniesienia) | openrouter (openai-compat)")
     ap.add_argument("--model", default="",
                     help="np. google/gemma-4-31b-it:free; domyslnie wg providera")
+    ap.add_argument("--no-dispatch", action="store_true",
+                    help="tryb porownawczy: bez dispatch/PR, tylko wynik+metryki")
     args = ap.parse_args()
 
     lines = ["[E3 night] " + time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())]
@@ -356,6 +358,14 @@ def main() -> int:
         return 0
 
     # dispatch -> PR -> merge
+    if args.no_dispatch:
+        model_name = args.model or PROVIDERS[args.provider].get("model", "domyslny")
+        lines.append(f"[comparison] no-dispatch: wynik odebrany, PR pominiete "
+                     f"(provider={args.provider} model={model_name})")
+        print("\n".join(lines))
+        cleanup_serv2(task)
+        return 0
+
     d = subprocess.run([sys.executable,
                         os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                      "dispatch.py"),
