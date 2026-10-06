@@ -22,7 +22,13 @@ import subprocess
 import sys
 import tempfile
 
+from features import FEATURES
+
 REPO = os.environ.get("LAB_REPO", "/home/ubuntu/agent-lab")
+# model rozwiazuje na base_commit (czysty tarball); patch MUSI byc
+# aplikowany na ten sam commit, inaczej git apply pada na zmergowanym mainie
+BASE_COMMIT = {name: f.get("base_commit", "HEAD")
+               for name, f in FEATURES.items()}
 SECRET_PATTERNS = [
     re.compile(r"AIza[0-9A-Za-z_\-]{30,}"),
     re.compile(r"AQ\.A[0-9A-Za-z_\-]{20,}"),
@@ -135,12 +141,13 @@ def main() -> int:
     print("[1/6] payload OK, secret scan clean "
           f"(patch {len(patch)} B, feature {feature})")
 
-    # 3) fresh main -> branch
+    # 3) fresh main -> branch od base_commit (model rozwiazywal na nim)
     sh(["git", "checkout", "main", "-q"])
     sh(["git", "pull", "-q", "--ff-only"])
+    base = BASE_COMMIT.get(feature, "HEAD")
     branch = f"feat/{feature}"
     sh(["git", "branch", "-D", branch], check=False)  # poprzednia próba, jeśli była
-    sh(["git", "checkout", "-q", "-b", branch])
+    sh(["git", "checkout", "-q", "-b", branch, base])
     with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as tf:
         tf.write(patch)
         patch_file = tf.name
