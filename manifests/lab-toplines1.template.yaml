@@ -54,10 +54,16 @@ spec:
               # repo: pobierz tarball z receivera (GET /payload/), zamiast inline b64
               # (env limit 32 KiB — inline tarball ~30 KB łamie ActorTemplate)
               import urllib.request
-              with open("/tmp/repo.tar.gz", "wb") as f:
-                  f.write(urllib.request.urlopen(
-                      "http://100.65.215.34:18080/payload/repo.tar.gz",
-                      timeout=30).read())
+              for _try in range(4):
+                  try:
+                      with open("/tmp/repo.tar.gz", "wb") as f:
+                          f.write(urllib.request.urlopen(
+                              "http://100.65.215.34:18080/payload/repo.tar.gz",
+                              timeout=30).read())
+                      break
+                  except Exception as _e:
+                      print("retry fetch repo.tar.gz:", _e, flush=True)
+                      import time as _t; _t.sleep(5)
               REPO_B64 = None  # nie używane; tarball już na dysku
               os.makedirs("repo", exist_ok=True)
               import tarfile

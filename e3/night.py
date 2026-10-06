@@ -197,7 +197,8 @@ def deploy(task_yaml_local: str, task_name: str,
     # UZYWAMY base_commit z features.py (nie HEAD!): po merge'u feature'u na main
     # tarball z HEAD zawieralby gotowe rozwiazanie -> 'echo' zamiast pracy modelu.
     tar_local = f"/tmp/e3-{task_name}-repo.tar.gz"
-    base_commit = FEATURES.get(task_name, {}).get("base_commit", "HEAD")
+    feature_name = task_name.removeprefix("lab-")
+    base_commit = FEATURES.get(feature_name, {}).get("base_commit", "HEAD")
     subprocess.run(["bash", "-c",
                     f"git -C {make_task.REPO} archive --format=tar.gz {base_commit} > {tar_local}"],
                    check=True)
