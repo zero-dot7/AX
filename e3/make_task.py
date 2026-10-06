@@ -22,27 +22,60 @@ TEMPLATE = "/home/ubuntu/ax/manifests/lab-toplines1.template.yaml"
 REPO = "/home/ubuntu/agent-lab"
 
 
-def make_tarball_b64(repo: str) -> str:
-    """Świeży tarball repo (git archive HEAD = main, bez .git)."""
+def git_show(repo: str, commit: str, path: str) -> str:
+    """Zawartosc pliku z okreslonego commitu repo (nie drzewa roboczego!)."""
     import subprocess
-    p = subprocess.run(["git", "archive", "--format=tar.gz", "HEAD"],
+    p = subprocess.run(["git", "show", f"{commit}:{path}"],
+                       cwd=repo, capture_output=True)
+    if p.returncode != 0:
+        raise RuntimeError(f"git show {commit}:{path} failed: " + p.stderr.decode()[:200])
+    return p.stdout.decode()
+
+
+def make_tarball_b64(repo: str, commit: str = "HEAD") -> str:
+    """Tarball repo z podanego commitu (default HEAD = main, bez .git)."""
+    import subprocess
+    p = subprocess.run(["git", "archive", "--format=tar.gz", commit],
                        cwd=repo, capture_output=True)
     if p.returncode != 0:
         raise RuntimeError("git archive failed: " + p.stderr.decode()[:200])
     return base64.b64encode(p.stdout).decode()
 
 
+def tarball_gate(repo: str, commit: str, feature_name: str) -> None:
+    """Gate: w tarballu zadania NIE WOLNO byc symbolu feature'u.
+
+    Po merge'u feature'u na main tarball z HEAD zawieralby gotowe rozwiazanie
+    -> modele robily by 'echo' gotowca (comparison 06/10 niewazny z tego powodu).
+    Sprawdzamy plik docelowy (src/lab/__init__.py) na obecnosc symbolu.
+    """
+    import subprocess
+    p = subprocess.run(["git", "show", commit + ":src/lab/__init__.py"],
+                       cwd=repo, capture_output=True)
+    if p.returncode != 0:
+        raise RuntimeError("git show failed: " + p.stderr.decode()[:200])
+    src = p.stdout.decode()
+    candidates = ("class " + feature_name.capitalize(), "def " + feature_name)
+    hits = [s for s in candidates if s in src]
+    if hits:
+        raise RuntimeError(
+            "GATE: tarball base zawiera juz symbol feature'u (" +
+            ", ".join(hits) + ") w src/lab/__init__.py — wybierz czystszy base_commit")
+
+
 def render(feature_name: str, repo: str = REPO) -> str:
     f = FEATURES[feature_name]
-    spec_path = os.path.join(repo, f["spec_file"])
-    spec = open(spec_path, encoding="utf-8").read()
+    base_commit = f.get("base_commit", "HEAD")
+    if base_commit != "HEAD":
+        tarball_gate(repo, base_commit, feature_name)
+    spec = git_show(repo, base_commit, f["spec_file"])
+    existing = git_show(repo, base_commit, "src/lab/__init__.py")
 
     head = f.get("prompt_head", PROMPT_HEAD)
     tail = f.get("prompt_tail", PROMPT_TAIL)
     prompt = head + f["prompt_core"] + tail.format(
         spec=spec,
-        existing=open(os.path.join(repo, "src/lab/__init__.py"),
-                      encoding="utf-8").read(),
+        existing=existing,
     )
 
     # testy: preambuła (importy) + linie z configu — CAŁOŚĆ trafia do join([...])

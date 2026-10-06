@@ -1,0 +1,101 @@
+apiVersion: ax.io/v1alpha1
+kind: Task
+metadata:
+    name: pi-smoke1
+    atespace: default
+spec:
+    image: localhost:5001/ax-task-runner@sha256:594e20cb3e23a5961cf6c7c9cb40e06e670e43a2172534d17eccbf65f8b1ff94
+    command:
+        - python3
+        - -c
+        - |
+          import subprocess, json, urllib.request, urllib.error, datetime, os, shlex, sys
+
+          NODE_VER = "v22.23.3"
+          TGZ = f"node-{NODE_VER}-linux-arm64.tar.gz"
+          NODE = f"/tmp/node-{NODE_VER}-linux-arm64/bin"
+          RECEIVER = "http://100.65.215.34:18080/pi-smoke1"
+          PROMPT = ("Napisz w Pythonie funkcje is_palindrome(s), ktora ignoruje wielkosc liter "
+                    "i znaki niealfanumeryczne, wraz z 3 testami assert. Zwroc tylko kod w jednym bloku.")
+
+          def sh(cmd, timeout=1500):
+              print("$", cmd.split()[0], "...", flush=True)
+              try:
+                  p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+              except subprocess.TimeoutExpired:
+                  print("TIMEOUT", cmd[:60], flush=True)
+                  return None
+              print("rc=", p.returncode, flush=True)
+              if p.returncode != 0:
+                  print("STDERR:", p.stderr[-1500:], flush=True)
+              _LAST["stderr"] = (p.stderr or "")[-1500:]
+              _LAST["cmd"] = cmd[:120]
+              return p
+
+          import tarfile
+
+          status, answer, raw_tail = "unknown", "", ""
+          _LAST = {"stderr": "", "cmd": ""}
+
+          try:
+              # 1) Node.js z nodejs.org (tar.gz; rozpakowanie python tarfile - busybox tar bez xz)
+              p = sh(f"curl -fsSL -o /tmp/{TGZ} https://nodejs.org/dist/{NODE_VER}/{TGZ}", timeout=1200)
+              if not p or p.returncode != 0:
+                  raise RuntimeError("node download failed")
+              with tarfile.open(f"/tmp/{TGZ}", "r:gz") as tf:
+                  tf.extractall("/tmp", filter="data")
+              nv = sh(f"{NODE}/node --version", timeout=60)
+              print("NODE_VERSION:", nv.stdout.strip() if nv else "?", flush=True)
+
+              # 2) pi (npm global do katalogu node); PATH z node dla shebanga npm
+              p = sh(f"export PATH={NODE}:$PATH && {NODE}/npm install -g --prefix /tmp/piroot --fetch-timeout=900000 --fetch-retries=8 --fetch-retry-mintimeout=15000 --fetch-retry-maxtimeout=120000 --fetch-maxsockets=1 @earendil-works/pi-coding-agent", timeout=1800)
+              if not p or p.returncode != 0:
+                  raise RuntimeError("npm install pi failed")
+              PI = "/tmp/piroot/bin/pi"
+
+              # 3) pi headless, provider google (GEMINI_API_KEY z env), JSON event stream
+              cmd = (f"export PATH={NODE}:$PATH && {PI} --provider google --model gemini-3.8-flash --mode json "
+                     f"-p {shlex.quote(PROMPT)}")
+              p = sh(cmd, timeout=900)
+              if not p:
+                  raise RuntimeError("pi run timed out")
+              raw_tail = (p.stdout + "\n" + p.stderr)[-4000:]
+              if p.returncode != 0:
+                  raise RuntimeError(f"pi exited rc={p.returncode}")
+              events = []
+              for line in p.stdout.splitlines():
+                  line = line.strip()
+                  if line.startswith("{"):
+                      try: events.append(json.loads(line))
+                      except Exception: pass
+              texts = []
+              for e in events:
+                  if e.get("type") == "message_end":
+                      m = e.get("message", {})
+                      c = m.get("content", [])
+                      if isinstance(c, list):
+                          texts.append("".join(part.get("text", "") for part in c if isinstance(part, dict)))
+                      elif isinstance(c, str):
+                          texts.append(c)
+              answer = texts[-1].strip() if texts else "(brak message_end w strumieniu)"
+              status = "ok" if texts else "no_events"
+          except Exception as e:
+              status = "error: " + repr(e)[:300]
+              raw_tail = (raw_tail + "\n[" + _LAST["cmd"] + "]\n" + _LAST["stderr"]).strip()[-4000:]
+
+          payload = json.dumps({
+              "task": "pi-smoke1", "status": status,
+              "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "answer": answer[:4000], "raw_tail": raw_tail[:4000],
+          }, ensure_ascii=False).encode()
+          req = urllib.request.Request(RECEIVER, data=payload, headers={"Content-Type": "application/json"})
+          try:
+              code = urllib.request.urlopen(req, timeout=15).status
+          except Exception as e:
+              code = repr(e)
+          print("PHASE_POST:", code, flush=True)
+          print("FINAL_ANSWER_HEAD:", answer[:300], flush=True)
+    env:
+        - name: GEMINI_API_KEY
+          value: "__GEMINI_KEY__"
+    debug: true
