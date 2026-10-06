@@ -72,7 +72,10 @@ spec:
               spec = open(spec_path, encoding="utf-8").read()
               print("SPEC_LEN:", len(spec), flush=True)
 
-              # 1) Gemini REST single-shot (free tier: 5 req/min -> 1 request, retry z backoff)
+              # 1) LLM single-shot: provider-agnostyczny adapter
+              #    gemini       = REST v1beta generateContent (punkt odniesienia)
+              #    openai-compat= /chat/completions (OpenRouter, DeepSeek,
+              #                   GLM, Ollama, vLLM — jeden format)
               import time
               PROMPT = ("Zaimplementuj w Pythonie funkcje opisana specyfikacja. Zwroc DOKLADNIE jeden blok kodu "
                         "w markdown (```python ... ```), zaden tekst poza nim. "
@@ -82,21 +85,38 @@ spec:
                         "Scoring: dlugosc linii cap 120 + 5 za kazdy znak '#'; puste linie nigdy w wyniku; "
                         "n > liczba kandydatow -> wszystkie; n <= 0 -> ValueError; wynik w kolejnosci wystepowania. "
                         "SPECYFIKACJA:\n" + spec)
-              body = json.dumps({"contents":[{"role":"user","parts":[{"text":PROMPT}]}],
-                                 "generationConfig":{"temperature":0.2,"maxOutputTokens":16384}}).encode()
-              url = ("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key="
-                     + os.environ["GEMINI_API_KEY"])
+              PROVIDER = os.environ.get("MODEL_PROVIDER", "gemini").strip()
+              headers = {"Content-Type": "application/json"}
+              if PROVIDER == "openai-compat":
+                  url = os.environ["LLM_BASE_URL"].rstrip("/") + "/chat/completions"
+                  headers["Authorization"] = "Bearer " + os.environ["LLM_KEY"]
+                  body = json.dumps({"model": os.environ["LLM_MODEL"],
+                                     "messages":[{"role":"user","content":PROMPT}],
+                                     "temperature":0.2, "max_tokens":16384}).encode()
+              else:  # gemini
+                  url = ("https://generativelanguage.googleapis.com/v1beta/models/"
+                         + os.environ.get("LLM_MODEL", "gemini-flash-lite-latest")
+                         + ":generateContent?key="
+                         + os.environ["GEMINI_API_KEY"])
+                  body = json.dumps({"contents":[{"role":"user","parts":[{"text":PROMPT}]}],
+                                     "generationConfig":{"temperature":0.2,"maxOutputTokens":16384}}).encode()
               answer = ""
               for attempt in range(6):
-                  req = urllib.request.Request(url, data=body, headers={"Content-Type":"application/json"})
+                  req = urllib.request.Request(url, data=body, headers=headers)
                   try:
                       r = urllib.request.urlopen(req, timeout=180)
                       d = json.loads(r.read())
-                      cands = d.get("candidates") or []
-                      if not cands:
-                          raise RuntimeError("no candidates: " + json.dumps(d)[:300])
-                      answer = "".join(p.get("text","") for p in cands[0].get("content",{}).get("parts",[])).strip()
-                      break
+                      if PROVIDER == "openai-compat":
+                          answer = ((d.get("choices") or [{}])[0].get("message",{})
+                                    .get("content") or "").strip()
+                      else:
+                          cands = d.get("candidates") or []
+                          if not cands:
+                              raise RuntimeError("no candidates: " + json.dumps(d)[:300])
+                          answer = "".join(p.get("text","") for p in cands[0].get("content",{}).get("parts",[])).strip()
+                      if answer:
+                          break
+                      raise RuntimeError("empty content")
                   except urllib.error.HTTPError as e:
                       msg = e.read().decode()[:300]
                       print("HTTP", e.code, msg[:200], flush=True)
@@ -106,7 +126,7 @@ spec:
                           continue
                       raise
               if not answer:
-                  raise RuntimeError("empty answer from gemini")
+                  raise RuntimeError("empty answer from LLM (" + PROVIDER + ")")
               print("ANSWER_LEN:", len(answer), flush=True)
               raw_tail = answer[-1500:]
 
@@ -203,4 +223,12 @@ spec:
     env:
         - name: GEMINI_API_KEY
           value: "__GEMINI_KEY__"
+        - name: MODEL_PROVIDER
+          value: "__MODEL_PROVIDER__"
+        - name: LLM_MODEL
+          value: "__LLM_MODEL__"
+        - name: LLM_BASE_URL
+          value: "__LLM_BASE_URL__"
+        - name: LLM_KEY
+          value: "__LLM_KEY__"
     debug: true

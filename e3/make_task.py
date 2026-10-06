@@ -109,4 +109,5 @@ if __name__ == "__main__":
     dest = sys.argv[2] if len(sys.argv) > 2 else f"/tmp/{sys.argv[1]}.template-out.yaml"
     open(dest, "w", encoding="utf-8").write(out)
     print(f"OK {dest} {len(out)} B; __GEMINI_KEY__ present: {'__GEMINI_KEY__' in out}; "
-          f"__REPO_B64__ resolved: {'__REPO_B64__' not in out}")
+          f"__REPO_B64__ resolved: {'__REPO_B64__' not in out}; "
+          f"providers unresolved: {sum(1 for p in ('__MODEL_PROVIDER__','__LLM_MODEL__','__LLM_BASE_URL__','__LLM_KEY__') if p in out)}")
