@@ -98,7 +98,7 @@ spec:
                   headers["Authorization"] = "Bearer " + os.environ["LLM_KEY"]
                   body = json.dumps({"model": os.environ["LLM_MODEL"],
                                      "messages":[{"role":"user","content":PROMPT}],
-                                     "temperature":0.2, "max_tokens":16384}).encode()
+                                     "temperature":0.2, "max_tokens":32768}).encode()
               else:  # gemini
                   url = ("https://generativelanguage.googleapis.com/v1beta/models/"
                          + os.environ.get("LLM_MODEL", "gemini-flash-lite-latest")
