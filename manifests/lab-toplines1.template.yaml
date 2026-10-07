@@ -91,25 +91,47 @@ spec:
                         "Scoring: dlugosc linii cap 120 + 5 za kazdy znak '#'; puste linie nigdy w wyniku; "
                         "n > liczba kandydatow -> wszystkie; n <= 0 -> ValueError; wynik w kolejnosci wystepowania. "
                         "SPECYFIKACJA:\n" + spec)
+              # env limit 32 KiB: existing src (17 kB) wstrzykiwany w RUNTIME
+              # z rozpakowanego tarballa (token __EXISTING_SRC__ w PROMPT)
+              PROMPT = PROMPT.replace("__EXISTING_SRC__", open(
+                  os.path.join(repo, "src", "lab", "__init__.py"),
+                  encoding="utf-8").read())
               PROVIDER = os.environ.get("MODEL_PROVIDER", "gemini").strip()
               headers = {"Content-Type": "application/json"}
+              # W22: BASE URL (default oficjalny API; przez quota-proxy przy failover drillu)
+              # + kolejka modeli glowny+fallbacki (puste = bez failoveru, jak dotychczas)
+              BASE = (os.environ.get("GEMINI_BASE_URL") or
+                      "https://generativelanguage.googleapis.com").rstrip("/")
+              model_q = [os.environ.get("LLM_MODEL", "gemini-flash-lite-latest")]
+              model_q += [m.strip() for m in os.environ.get("LLM_FALLBACK_MODELS", "")
+                          .split(",") if m.strip()]
+              model = model_q[0]
               if PROVIDER == "openai-compat":
                   url = os.environ["LLM_BASE_URL"].rstrip("/") + "/chat/completions"
                   headers["Authorization"] = "Bearer " + os.environ["LLM_KEY"]
-                  body = json.dumps({"model": os.environ["LLM_MODEL"],
+                  body = json.dumps({"model": model,
                                      "messages":[{"role":"user","content":PROMPT}],
                                      "temperature":0.2, "max_tokens":16384,
                                      "reasoning": {"enabled": False,
                                                    "max_tokens": 4096}}).encode()
               else:  # gemini
-                  url = ("https://generativelanguage.googleapis.com/v1beta/models/"
-                         + os.environ.get("LLM_MODEL", "gemini-flash-lite-latest")
-                         + ":generateContent?key="
-                         + os.environ["GEMINI_API_KEY"])
+                  url = (BASE + "/v1beta/models/" + model
+                         + ":generateContent?key=" + os.environ["GEMINI_API_KEY"])
                   body = json.dumps({"contents":[{"role":"user","parts":[{"text":PROMPT}]}],
                                      "generationConfig":{"temperature":0.2,"maxOutputTokens":16384}}).encode()
+              def _body_for(m):
+                  if PROVIDER == "openai-compat":
+                      return json.dumps({"model": m,
+                                         "messages":[{"role":"user","content":PROMPT}],
+                                         "temperature":0.2, "max_tokens":16384,
+                                         "reasoning": {"enabled": False,
+                                                       "max_tokens": 4096}}).encode()
+                  return json.dumps({"contents":[{"role":"user","parts":[{"text":PROMPT}]}],
+                                     "generationConfig":{"temperature":0.2,
+                                                         "maxOutputTokens":16384}}).encode()
               answer = ""
-              for attempt in range(6):
+              attempt = 0
+              while not answer:
                   req = urllib.request.Request(url, data=body, headers=headers)
                   try:
                       r = urllib.request.urlopen(req, timeout=180)
@@ -129,10 +151,24 @@ spec:
                       msg = e.read().decode()[:300]
                       print("HTTP", e.code, msg[:200], flush=True)
                       raw_tail = (raw_tail + "\nHTTP " + str(e.code) + ": " + msg).strip()[-4000:]
+                      if e.code == 429 and len(model_q) > 1:
+                          # W22: quota wyczerpana na modelu glownym -> fallback
+                          model_q.pop(0)
+                          model = model_q[0]
+                          print("FAILOVER ->", model, flush=True)
+                          if PROVIDER == "gemini":
+                              url = (BASE + "/v1beta/models/" + model
+                                     + ":generateContent?key="
+                                     + os.environ["GEMINI_API_KEY"])
+                          body = _body_for(model)
+                          attempt = 0
+                          continue
                       if e.code in (429, 500, 503) and attempt < 5:
-                          time.sleep(25 * (attempt + 1))
+                          attempt += 1
+                          time.sleep(25 * attempt)
                           continue
                       raise
+              print("MODEL_IN_USE:", model, flush=True)
               if not answer:
                   raise RuntimeError("empty answer from LLM (" + PROVIDER + ")")
               print("ANSWER_LEN:", len(answer), flush=True)
@@ -239,4 +275,8 @@ spec:
           value: "__LLM_BASE_URL__"
         - name: LLM_KEY
           value: "__LLM_KEY__"
+        - name: GEMINI_BASE_URL
+          value: "__GEMINI_BASE_URL__"
+        - name: LLM_FALLBACK_MODELS
+          value: "__LLM_FALLBACK_MODELS__"
     debug: true

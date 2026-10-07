@@ -74,20 +74,15 @@ def render(feature_name: str, repo: str = REPO) -> str:
         spec = spec + inj
     existing = git_show(repo, base_commit, "src/lab/__init__.py")
 
-    # Sandbox ma pelne repo na dysku (/workspace/agent-lab) — wstrzykiwanie
-    # calego pliku do promptu jest redundantne i rozdyma AX_TASK_YAML.
-    # Limit API: env value <= 32768 znakow (CreateActorTemplate InvalidArgument,
-    # run 07/10 20:30: task 35361 B -> aktor nie powstal -> egress 12x
-    # FailedPrecondition -> exit 1). Clipujemy do naglowka (konwencje pakietu)
-    # + wskazowka gdzie czytac pelny kod.
-    MAX_EXISTING = 2500
-    if len(existing) > MAX_EXISTING:
-        head_src = existing[:MAX_EXISTING]
-        # utnij do ostatniej pelnej linii (nie w srodku def/class)
-        cut = head_src.rfind("\n")
-        existing = head_src[:cut] + (
-            "\n    # ... [CLIPPED: pelny kod zrodlowy w sandboxie: "
-            "cat /workspace/agent-lab/src/lab/__init__.py] ...\n")
+    # Limit API: env AX_TASK_YAML <= 32768 znakow (CreateActorTemplate
+    # InvalidArgument, run 07/10 20:30: task 35361 B -> aktor nie powstal ->
+    # egress 12x FailedPrecondition -> exit 1). Model jest single-shot i MUSI
+    # dostac pelny existing w PROMPCIE (clip 2500 B = falszywy VALIDATION FAIL,
+    # run 21:55: przepisal __init__.py niekompletnie). Rozwiazanie: w yaml
+    # zostaje token __EXISTING_SRC__, a pelny plik jest doklejany W RUNTIME
+    # z rozpakowanego tarballa (repo na dysku sandboxa; tarball z base_commit).
+    del existing
+    existing = "__EXISTING_SRC__"
 
     head = f.get("prompt_head", PROMPT_HEAD)
     tail = f.get("prompt_tail", PROMPT_TAIL)
