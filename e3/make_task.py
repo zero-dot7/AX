@@ -69,7 +69,25 @@ def render(feature_name: str, repo: str = REPO) -> str:
     if base_commit != "HEAD":
         tarball_gate(repo, base_commit, feature_name)
     spec = git_show(repo, base_commit, f["spec_file"])
+    inj = f.get("spec_inject")
+    if inj:  # W21: injekcja doklejana do specu w PROMPCIE (repo bez zmian)
+        spec = spec + inj
     existing = git_show(repo, base_commit, "src/lab/__init__.py")
+
+    # Sandbox ma pelne repo na dysku (/workspace/agent-lab) — wstrzykiwanie
+    # calego pliku do promptu jest redundantne i rozdyma AX_TASK_YAML.
+    # Limit API: env value <= 32768 znakow (CreateActorTemplate InvalidArgument,
+    # run 07/10 20:30: task 35361 B -> aktor nie powstal -> egress 12x
+    # FailedPrecondition -> exit 1). Clipujemy do naglowka (konwencje pakietu)
+    # + wskazowka gdzie czytac pelny kod.
+    MAX_EXISTING = 2500
+    if len(existing) > MAX_EXISTING:
+        head_src = existing[:MAX_EXISTING]
+        # utnij do ostatniej pelnej linii (nie w srodku def/class)
+        cut = head_src.rfind("\n")
+        existing = head_src[:cut] + (
+            "\n    # ... [CLIPPED: pelny kod zrodlowy w sandboxie: "
+            "cat /workspace/agent-lab/src/lab/__init__.py] ...\n")
 
     head = f.get("prompt_head", PROMPT_HEAD)
     tail = f.get("prompt_tail", PROMPT_TAIL)
@@ -105,8 +123,12 @@ def render(feature_name: str, repo: str = REPO) -> str:
     # plik testowy + diff paths (w template rozbite na literaly: os.path.join, a/tests/, b/tests/)
     out = out.replace("test_top_lines.py", f["test_file"].split("/")[-1])
     # sandbox odpala WSZYSTKIE testy repo (stare + nowy) — regresje lapane przed POST
+    # "==TESTFILE <name>==" delimuje sekcje per plik; night.py (W19 honest-fail gate)
+    # orzeka cheating TYLKO w sekcji pliku testowego featury — nie w calym sklejonym
+    # tests_out (lekcja z nocy 06/07.10: 58x marker z poprzednich plikow = falszywy alarm)
     out = out.replace('"cd {repo} && python3 tests/' + f["test_file"].split("/")[-1] + '"',
-                      '"cd {repo} && for t in tests/test_*.py; do python3 $t || exit 1; done"')
+                      '"cd {repo} && for t in tests/test_*.py; do '
+                      'echo \\"==TESTFILE $t==\\"; python3 $t || exit 1; done"')
     out = out.replace('"--- feat/top-lines\\n"', f'"--- {f["branch"]}\\n"')
 
     # Zadania typu "answer_path": blok odpowiedzi agenta trafia do innego
@@ -130,6 +152,13 @@ def render(feature_name: str, repo: str = REPO) -> str:
     # inaczej git apply --check failuje ("patch does not apply").
     if f.get("existing_test"):
         out = out.replace(' + "".join(d2)', '')
+    # TWARDY GATE: env value (AX_TASK_YAML) ma limit 32768 znakow.
+    # Render powyzej limitu = aktor nie powstanie (InvalidArgument z API,
+    # nie widoczny w exit code ax apply!). Zatrzymujemy PRZED deployem.
+    if len(out) > 32768:
+        raise RuntimeError(
+            f"GATE: rendered task {len(out)} B przekracza limit 32768 "
+            "(env AX_TASK_YAML) — odchudzic spec/prompt/tail")
     return out
 
 
