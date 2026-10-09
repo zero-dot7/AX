@@ -1,0 +1,150 @@
+apiVersion: ax.io/v1alpha1
+kind: Workspace
+metadata:
+    name: agent-lab
+    atespace: default
+spec:
+    git:
+        - name: agent-lab
+          repo: http://100.65.215.34:18080/agent-lab.git
+          branch: main
+          depth: 1
+---
+apiVersion: ax.io/v1alpha1
+kind: Task
+metadata:
+    name: speeddial-analysis
+    atespace: default
+spec:
+    image: localhost:5001/ax-task-runner@sha256:594e20cb3e23a5961cf6c7c9cb40e06e670e43a2172534d17eccbf65f8b1ff94
+    workspaces:
+        - name: agent-lab
+          path: /workspace
+    command:
+        - python3
+        - -c
+        - |
+          import subprocess, json, urllib.request, datetime, os, sys, tarfile, time
+
+          RECEIVER = "http://100.65.215.34:18080/speeddial-analysis"
+          status, answer, raw_tail = "unknown", "", ""
+
+          try:
+              # 0) tarball speed-dial z receivera (GET /payload/, retry x4)
+              import urllib.request
+              for _try in range(4):
+                  try:
+                      with open("/tmp/speeddial.tar.gz", "wb") as f:
+                          f.write(urllib.request.urlopen(
+                              "http://100.65.215.34:18080/payload/speeddial.tar.gz",
+                              timeout=30).read())
+                      break
+                  except Exception as _e:
+                      print("retry fetch speeddial.tar.gz:", _e, flush=True)
+                      time.sleep(5)
+              os.makedirs("/tmp/sd", exist_ok=True)
+              with tarfile.open("/tmp/speeddial.tar.gz") as tf:
+                  tf.extractall("/tmp/sd", filter="data")
+              base = "/tmp/sd/speed-dial"
+              files = {}
+              for rel in ("app.js", "newtab.html", "style.css", "manifest.json",
+                          "test/run-tests.js", "test/chrome-mock.js", "DROPBOX-SETUP.md"):
+                  p = os.path.join(base, rel)
+                  if os.path.exists(p):
+                      files[rel] = open(p, encoding="utf-8", errors="replace").read()
+              total = sum(len(v) for v in files.values())
+              print("FILES:", sorted(files), "total", total, "chars", flush=True)
+
+              # 1) LLM: analiza kodu (openai-compat / gemini)
+              PROMPT = (
+                  "Jestes ekspertem od rozszerzen Chrome (Manifest V3) i JavaScript. "
+                  "Przeanalizuj ponizszy kod rozszerzenia 'Speed Dial' (nowa karta z kafelkami linkow "
+                  "+ backup do Dropbox przez OAuth 2.0 + PKCE). Zwroc RAPORT w jezyku POLSKIM "
+                  "w markdown, bez blokow kodu modyfikujacych pliki (to analiza, nie patch). "
+                  "Struktura raportu:\n"
+                  "## Bledy (BUGS) - konkretny plik:linia, opis, wplyw, sugerowany fix\n"
+                  "## Optymalizacje - wydajnosc (render, DOM, storage, network)\n"
+                  "## Bezpieczenstwo - XSS, OAuth/PKCE, storage tokenow, permissions, CSP\n"
+                  "## Jakosc kodu - duplikacja, martwy kod, brakujaca obsluga bledow\n"
+                  "## Architektura - co warto refaktoryzowac i dlaczego (krotko)\n"
+                  "## Top 10 - lista priorytetowa najwazniejszych znalezisk\n"
+                  "Badz konkretny: kazde znalezisko z lokalizacja (plik + funkcja/linia). "
+                  "Nie wymyslaj problemow ktorych nie ma; jezeli kod jest OK w jakims obszarze, napisz to.\n"
+                  "\n=== KOD ZRODLOWY ===\n"
+                  + "\n\n".join(f"----- FILE: {rel} -----\n{txt}" for rel, txt in sorted(files.items())))
+              print("PROMPT_LEN:", len(PROMPT), flush=True)
+
+              PROVIDER = os.environ.get("MODEL_PROVIDER", "gemini").strip()
+              headers = {"Content-Type": "application/json"}
+              if PROVIDER == "openai-compat":
+                  url = os.environ["LLM_BASE_URL"].rstrip("/") + "/chat/completions"
+                  headers["Authorization"] = "Bearer " + os.environ["LLM_KEY"]
+                  body = json.dumps({"model": os.environ["LLM_MODEL"],
+                                     "messages":[{"role":"user","content":PROMPT}],
+                                     "temperature":0.2, "max_tokens":16384,
+                                     "reasoning": {"enabled": False,
+                                                   "max_tokens": 4096}}).encode()
+              else:  # gemini
+                  url = ( "https://generativelanguage.googleapis.com/v1beta/models/"
+                          + os.environ.get("LLM_MODEL", "gemini-flash-lite-latest")
+                          + ":generateContent?key="
+                          + os.environ["GEMINI_API_KEY"])
+                  body = json.dumps({"contents":[{"role":"user","parts":[{"text":PROMPT}]}],
+                                     "generationConfig":{"temperature":0.2,"maxOutputTokens":16384}}).encode()
+              answer = ""
+              for attempt in range(6):
+                  req = urllib.request.Request(url, data=body, headers=headers)
+                  try:
+                      r = urllib.request.urlopen(req, timeout=180)
+                      d = json.loads(r.read())
+                      if PROVIDER == "openai-compat":
+                          answer = ((d.get("choices") or [{}])[0].get("message",{})
+                                    .get("content") or "").strip()
+                      else:
+                          cands = d.get("candidates") or []
+                          if not cands:
+                              raise RuntimeError("no candidates: " + json.dumps(d)[:300])
+                          answer = "".join(p.get("text","") for p in cands[0].get("content",{}).get("parts",[])).strip()
+                      if answer:
+                          break
+                      raise RuntimeError("empty content")
+                  except urllib.error.HTTPError as e:
+                      msg = e.read().decode()[:300]
+                      print("HTTP", e.code, msg[:200], flush=True)
+                      raw_tail = (raw_tail + "\nHTTP " + str(e.code) + ": " + msg).strip()[-4000:]
+                      if e.code in (429, 500, 503) and attempt < 5:
+                          time.sleep(25 * (attempt + 1))
+                          continue
+                      raise
+              if not answer:
+                  raise RuntimeError("empty answer from LLM (" + PROVIDER + ")")
+              print("ANSWER_LEN:", len(answer), flush=True)
+              raw_tail = answer[-1500:]
+              status = "ok"
+          except Exception as e:
+              status = "error: " + repr(e)[:300]
+
+          payload = json.dumps({
+              "task": "speeddial-analysis", "status": status,
+              "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "answer": answer[:60000], "raw_tail": raw_tail[:3000],
+          }, ensure_ascii=False).encode()
+          req = urllib.request.Request(RECEIVER, data=payload, headers={"Content-Type": "application/json"})
+          try:
+              code = urllib.request.urlopen(req, timeout=15).status
+          except Exception as e:
+              code = repr(e)
+          print("PHASE_POST:", code, flush=True)
+          print("FINAL_STATUS:", status, flush=True)
+    env:
+        - name: GEMINI_API_KEY
+          value: "__GEMINI_KEY__"
+        - name: MODEL_PROVIDER
+          value: "__MODEL_PROVIDER__"
+        - name: LLM_MODEL
+          value: "__LLM_MODEL__"
+        - name: LLM_BASE_URL
+          value: "__LLM_BASE_URL__"
+        - name: LLM_KEY
+          value: "__LLM_KEY__"
+    debug: true

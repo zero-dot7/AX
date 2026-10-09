@@ -1,0 +1,166 @@
+apiVersion: ax.io/v1alpha1
+kind: Workspace
+metadata:
+    name: agent-lab
+    atespace: default
+spec:
+    git:
+        - name: agent-lab
+          repo: http://100.65.215.34:18080/agent-lab.git
+          branch: main
+          depth: 1
+---
+apiVersion: ax.io/v1alpha1
+kind: Task
+metadata:
+    name: speeddial-fix
+    atespace: default
+spec:
+    image: localhost:5001/ax-task-runner@sha256:594e20cb3e23a5961cf6c7c9cb40e06e670e43a2172534d17eccbf65f8b1ff94
+    workspaces:
+        - name: agent-lab
+          path: /workspace
+    command:
+        - python3
+        - -c
+        - |
+          import json, urllib.request, urllib.error, datetime, os, sys, tarfile, time, re
+
+          RECEIVER = "http://100.65.215.34:18080/speeddial-fix"
+          status, answer, raw_tail = "unknown", "", ""
+
+          try:
+              # 0) tarball speed-dial z receivera (GET /payload/, retry x4)
+              for _try in range(4):
+                  try:
+                      with open("/tmp/speeddial.tar.gz", "wb") as f:
+                          f.write(urllib.request.urlopen(
+                              "http://100.65.215.34:18080/payload/speeddial.tar.gz",
+                              timeout=30).read())
+                      break
+                  except Exception as _e:
+                      print("retry fetch:", _e, flush=True)
+                      time.sleep(5)
+              os.makedirs("/tmp/sd", exist_ok=True)
+              with tarfile.open("/tmp/speeddial.tar.gz") as tf:
+                  tf.extractall("/tmp/sd", filter="data")
+              base = "/tmp/sd/speed-dial"
+              files = {}
+              for rel in ("app.js", "newtab.html", "style.css", "manifest.json",
+                          "test/run-tests.js"):
+                  p = os.path.join(base, rel)
+                  if os.path.exists(p):
+                      files[rel] = open(p, encoding="utf-8", errors="replace").read()
+              total = sum(len(v) for v in files.values())
+              print("FILES:", sorted(files), "total", total, "chars", flush=True)
+
+              # 1) LLM: wygeneruj patch wg TOP 10
+              PROMPT = (
+                  "Jestes ekspertem od rozszerzen Chrome (Manifest V3). Ponizej kod rozszerzenia "
+                  "'Speed Dial' (nowa karta z kafelkami + backup Dropbox OAuth2/PKCE) oraz jego testy "
+                  "(97/97 przechodzi; NIE wolno zepsuc zachowania pokrytego testami).\n\n"
+                  "Wykonaj chirurgiczne poprawki wg tej listy TOP 10 (z audytu):\n"
+                  "1. [BUG] Niestabilne miniatury: chrome.tabs.captureVisibleTab na oknie bez fokusu - "
+                  "ustaw focused:true przy tworzeniu okna i przywroc fokus do newtab po capturze.\n"
+                  "2. [SEC] <all_urls> w manifest.json: jesli da sie zawezic (np. activeTab lub "
+                  "opcjonalne host_permissions), zawez; jesmi nie - zostaw i dodaj komentarz w opisie.\n"
+                  "3. [BUG] Brak mutexa przy refresh tokena OAuth: zserializuj odswiezanie "
+                  "(pojedynczy in-flight refresh, pozostale czekaja na wynik).\n"
+                  "4. [CODE] renderGroup mutuje state.view.pages - usun side-effect, funkcja ma byc czysta.\n"
+                  "5. [OPT] Debounce auto-backupu (np. 2-5 s) przy masowych zapisach lokalnych.\n"
+                  "6. [BUG] Import URL bez protokolu (www.example.com) odrzucany - normalizuj "
+                  "dodajac https:// tak jak w edycji kafelka.\n"
+                  "7. [ARCH] Monolit app.js: NIE refaktoryzuj calego pliku - tylko jesli ktorys fix "
+                  "i tak wymaga wydzielenia funkcji, zrób minimalne wydzielenie.\n"
+                  "8. [SEC] App key Dropbox ze storage.sync -> storage.local.\n"
+                  "9. [CODE] Zdeduplikuj obsluge bledow Dropbox (wspolny helper).\n"
+                  "10. [OPT] Miniatury: przenies do IndexedDB z fallbackiem na obecnym storage "
+                  "(zachowaj kompatybilnosci i testy pkt26 thumb w storage/DOM).\n\n"
+                  "ZASADY: minimalne diffy, zero kosmetyki, zachowaj styl i jezyk (EN UI) kodu. "
+                  "Fix 2 i 7 moze byc 'skip + uzasadnienie' jesli ryzyko zepsucia > zysk.\n"
+                  "ODPOWIEDZ: NAJPIERW krotkie podsumowanie (ktore fixy zrobione/skipped, dlaczego), "
+                  "POTE Dokladnie jeden blok kodu w fence ```diff ... ``` zawierajacykompletny "
+                  "unified diff (git format, sciezki a/app.js b/app.js itd.) dla WSZYSTKICH plikow. "
+                  "Diff musi aplikowac sie czysto na podany kod (git apply).\n"
+                  "\n=== KOD ===\n"
+                  + "\n\n".join(f"----- FILE: {rel} -----\n{txt}" for rel, txt in sorted(files.items())))
+              print("PROMPT_LEN:", len(PROMPT), flush=True)
+
+              PROVIDER = os.environ.get("MODEL_PROVIDER", "gemini").strip()
+              headers = {"Content-Type": "application/json"}
+              if PROVIDER == "openai-compat":
+                  url = os.environ["LLM_BASE_URL"].rstrip("/") + "/chat/completions"
+                  headers["Authorization"] = "Bearer " + os.environ["LLM_KEY"]
+                  body = json.dumps({"model": os.environ["LLM_MODEL"],
+                                     "messages":[{"role":"user","content":PROMPT}],
+                                     "temperature":0.2, "max_tokens":16384,
+                                     "reasoning": {"enabled": False,
+                                                   "max_tokens": 4096}}).encode()
+              else:
+                  url = ( "https://generativelanguage.googleapis.com/v1beta/models/"
+                          + os.environ.get("LLM_MODEL", "gemini-flash-lite-latest")
+                          + ":generateContent?key=" + os.environ["GEMINI_API_KEY"])
+                  body = json.dumps({"contents":[{"role":"user","parts":[{"text":PROMPT}]}],
+                                     "generationConfig":{"temperature":0.2,"maxOutputTokens":16384}}).encode()
+              answer = ""
+              for attempt in range(6):
+                  req = urllib.request.Request(url, data=body, headers=headers)
+                  try:
+                      r = urllib.request.urlopen(req, timeout=240)
+                      d = json.loads(r.read())
+                      if PROVIDER == "openai-compat":
+                          answer = ((d.get("choices") or [{}])[0].get("message",{})
+                                    .get("content") or "").strip()
+                      else:
+                          cands = d.get("candidates") or []
+                          if not cands:
+                              raise RuntimeError("no candidates: " + json.dumps(d)[:300])
+                          answer = "".join(p.get("text","") for p in cands[0].get("content",{}).get("parts",[])).strip()
+                      if answer:
+                          break
+                      raise RuntimeError("empty content")
+                  except urllib.error.HTTPError as e:
+                      msg = e.read().decode()[:300]
+                      print("HTTP", e.code, msg[:200], flush=True)
+                      raw_tail = (raw_tail + "\nHTTP " + str(e.code) + ": " + msg).strip()[-4000:]
+                      if e.code in (429, 500, 503) and attempt < 5:
+                          time.sleep(25 * (attempt + 1))
+                          continue
+                      raise
+              if not answer:
+                  raise RuntimeError("empty answer from LLM (" + PROVIDER + ")")
+              print("ANSWER_LEN:", len(answer), flush=True)
+              m = re.search(r"```diff\n(.*?)```", answer, re.S)
+              diff = m.group(1).strip() if m else ""
+              print("DIFF_LEN:", len(diff), "HUNKS:", diff.count("@@"), flush=True)
+              raw_tail = answer[-1500:]
+              status = "ok" if diff else "error: no diff block in answer"
+          except Exception as e:
+              status = "error: " + repr(e)[:300]
+
+          payload = json.dumps({
+              "task": "speeddial-fix", "status": status,
+              "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "answer": answer[:90000],
+              "diff_len": len(diff) if 'diff' in dir() else 0,
+              "raw_tail": raw_tail[:3000],
+          }, ensure_ascii=False).encode()
+          req = urllib.request.Request(RECEIVER, data=payload, headers={"Content-Type": "application/json"})
+          try:
+              code = urllib.request.urlopen(req, timeout=15).status
+          except Exception as e:
+              code = repr(e)
+          print("PHASE_POST:", code, flush=True)
+          print("FINAL_STATUS:", status, flush=True)
+    env:
+        - name: GEMINI_API_KEY
+          value: "__GEMINI_KEY__"
+        - name: MODEL_PROVIDER
+          value: "__MODEL_PROVIDER__"
+        - name: LLM_MODEL
+          value: "__LLM_MODEL__"
+        - name: LLM_BASE_URL
+          value: "__LLM_BASE_URL__"
+        - name: LLM_KEY
+          value: "__LLM_KEY__"
+    debug: true
