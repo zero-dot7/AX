@@ -34,7 +34,7 @@ REMOTE_KEY = "/home/hermes/ax-test/gemini-key.env"
 EGRESS_JSON = "/home/hermes/ax-test/lab-toplines1-egress.json"
 DATA_DIR = "/home/hermes/ax-test/data"
 KEY_LEN = 53  # format AQ.A… — walidacja po DŁUGOŚCI, nie prefiksie
-POLL_TIMEOUT = 40 * 60  # task 3 s–13 min; zawieszone npm >30 min = zabite
+POLL_TIMEOUT = 90 * 60  # parse-kv: workspace init (clone+deps) zabral >30 min, model doszedł do LLM-call w ~35-40 min
 POLL_STEP = 60
 
 # Multi-LLM (pkt 4 "fabryka"): provider = gemini (punkt odniesienia) lub
