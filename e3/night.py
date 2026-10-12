@@ -191,8 +191,18 @@ def preflight() -> list[str]:
                        capture_output=True, text=True).stdout.strip()
     if b != "main":
         errs.append(f"not on main (on {b})")
-    subprocess.run(["git", "-C", repo, "pull", "-q", "--ff-only"],
-                   check=True, capture_output=True)
+    # pull z tolerancja bledow sieci: proba naprawy fetch+reset zamiast crashu
+    # (incydent 2026-10-12 03:00: chwilowy blad pull wzial caly slot)
+    pr = subprocess.run(["git", "-C", repo, "pull", "-q", "--ff-only"],
+                        capture_output=True, text=True)
+    if pr.returncode != 0:
+        fr = subprocess.run(["git", "-C", repo, "fetch", "origin"],
+                            capture_output=True, text=True)
+        rr = subprocess.run(["git", "-C", repo, "reset", "-q", "--hard",
+                             "origin/main"], capture_output=True, text=True)
+        if fr.returncode != 0 or rr.returncode != 0:
+            errs.append(f"git sync fail: pull={pr.stderr[-120:]!r} "
+                        f"reset={rr.stderr[-120:]!r}")
     # quota Gemini: ping quoty na serv2 (wzorzec z E2 — exit 0 = OK)
     p = ssh("bash -lc 'set -a; source ~/ax-test/gemini-key.env; set +a; "
             "curl -s -o /dev/null -w \\\"%{http_code}\\\" "
