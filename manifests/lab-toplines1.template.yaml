@@ -111,24 +111,24 @@ spec:
                   headers["Authorization"] = "Bearer " + os.environ["LLM_KEY"]
                   body = json.dumps({"model": model,
                                      "messages":[{"role":"user","content":PROMPT}],
-                                     "temperature":0.2, "max_tokens":16384,
+                                     "temperature":0.2, "max_tokens":65536,
                                      "reasoning": {"enabled": False,
                                                    "max_tokens": 4096}}).encode()
               else:  # gemini
                   url = (BASE + "/v1beta/models/" + model
                          + ":generateContent?key=" + os.environ["GEMINI_API_KEY"])
                   body = json.dumps({"contents":[{"role":"user","parts":[{"text":PROMPT}]}],
-                                     "generationConfig":{"temperature":0.2,"maxOutputTokens":16384}}).encode()
+                                     "generationConfig":{"temperature":0.2,"maxOutputTokens":65536}}).encode()
               def _body_for(m):
                   if PROVIDER == "openai-compat":
                       return json.dumps({"model": m,
                                          "messages":[{"role":"user","content":PROMPT}],
-                                         "temperature":0.2, "max_tokens":16384,
+                                         "temperature":0.2, "max_tokens":65536,
                                          "reasoning": {"enabled": False,
                                                        "max_tokens": 4096}}).encode()
                   return json.dumps({"contents":[{"role":"user","parts":[{"text":PROMPT}]}],
                                      "generationConfig":{"temperature":0.2,
-                                                         "maxOutputTokens":16384}}).encode()
+                                                         "maxOutputTokens":65536}}).encode()
               answer = ""
               attempt = 0
               while not answer:
