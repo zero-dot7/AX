@@ -134,7 +134,7 @@ spec:
               while not answer:
                   req = urllib.request.Request(url, data=body, headers=headers)
                   try:
-                      r = urllib.request.urlopen(req, timeout=180)
+                      r = urllib.request.urlopen(req, timeout=900)
                       d = json.loads(r.read())
                       if PROVIDER == "openai-compat":
                           answer = ((d.get("choices") or [{}])[0].get("message",{})
