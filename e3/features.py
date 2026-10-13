@@ -15,7 +15,10 @@ PROMPT_HEAD = (
 PROMPT_TAIL = (
     ", ZERO importow z innych modulow pakietu lab. "
     "PLIK src/lab/__init__.py ZAWIERA JUZ FUNKCJE PONIZEJ — skopiuj je DOKLADNIE 1:1 "
-    "bez najmniejszej zmiany, dodaj tylko nowa funkcje i jej nazwe do __all__:\n"
+    "bez najmniejszej zmiany, dodaj tylko nowa funkcje i jej nazwe do __all__. "
+    "KRYTYCZNE: po Twojej zmianie przejda testy WSZYSTKICH funkcji (nie tylko nowej) — "
+    "jakakolwiek regresja w istniejacym kodzie (nawet 1 znak) = CALY RUN FAIL. "
+    "Nie poprawiaj, nie refaktoruj, nie skracaj istniejacego kodu.\n"
     "```python\n{existing}\n```\n"
     "SPECYFIKACJA:\n{spec}"
 )
