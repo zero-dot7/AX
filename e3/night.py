@@ -45,7 +45,7 @@ POLL_STEP = 60
 PROVIDERS = {
     "gemini": dict(key_file="/home/hermes/ax-test/gemini-key.env",
                    key_var="GEMINI_API_KEY", key_len=53,
-                   model="gemini-flash-lite-latest"),
+                   model="gemini-flash-latest"),
     "openrouter": dict(key_file="/home/hermes/ax-test/openrouter-key.env",
                        key_var="OPENROUTER_API_KEY", key_len=73,
                        base_url="https://openrouter.ai/api/v1",
@@ -233,7 +233,7 @@ def deploy(task_yaml_local: str, task_name: str,
                    check=True)
     pc = PROVIDERS[provider]
     model = model or {
-        "gemini": "gemini-flash-lite-latest",
+        "gemini": "gemini-flash-latest",
         "openrouter": "google/gemma-4-31b-it:free",
     }[provider]
     # W22 quota failover: features[feature].quota_failover -> model A przez
@@ -242,9 +242,10 @@ def deploy(task_yaml_local: str, task_name: str,
     feature_name = task_name.removeprefix("lab-")
     failover = FEATURES.get(feature_name, {}).get("quota_failover")
     base_url = "http://100.65.215.34:18090" if failover else ""
-    fallback = ("gemini-flash-lite-latest" if failover else "")
-    if failover and model == "gemini-flash-lite-latest":
+    fallback = ("gemini-flash-latest" if failover else "")
+    if failover and model == "gemini-flash-latest":
         model = "gemini-3.8-flash"  # model A drillu (throttled w proxy)
+
     # W22: czysty log proxy przed runem (gate orzeka tylko na tym runie)
     if failover:
         ssh("rm -f /home/hermes/ax-test/quota-proxy.log", check=False)
