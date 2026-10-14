@@ -150,15 +150,28 @@ def ssh(cmd: str, timeout: int = 120, check: bool = True):
 
 
 def pick_feature(dry: bool) -> str | None:
-    """Pierwszy feature, którego funkcji nie ma w src/lab/__init__.py."""
-    init = open(os.path.join(make_task.REPO, "src/lab/__init__.py"),
-                encoding="utf-8").read()
+    """Pierwszy feature, ktorego funkcji nie ma w publicznym interfejsie lab.
+
+    Nie grepujemy def w __init__.py — funkcja moze byc re-exportem z
+    podmodulu (np. reporting.git_log_json); jedyny wlasciwy test to import.
+    """
+    imports = {n: FEATURES[n]["test_import"] for n in QUEUE}
+    probe = (
+        "import sys; sys.path.insert(0, 'src')\n"
+        + "\n".join(
+            f"try:\n    {imp}\nexcept Exception:\n    print('{n}')"
+            for n, imp in imports.items()
+        )
+    )
+    p = subprocess.run([sys.executable, "-c", probe],
+                       capture_output=True, text=True, timeout=60,
+                       cwd=make_task.REPO)
+    missing = set(p.stdout.split())
     skip = attempted_recent()  # podjete w oknie dedupe (inny slot tej nocy)
     for name in QUEUE:
         if name in skip:
             continue
-        fn = FEATURES[name]["test_import"].split()[-1]
-        if f"def {fn}(" not in init and f"class {fn}" not in init:
+        if name in missing:
             return name
     return None
 
