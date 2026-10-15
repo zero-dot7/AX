@@ -60,6 +60,7 @@ QUEUE = ["conventional-commit", "parse-duration",  # W21/W22 (noc 2, 07→08/10)
          "semver",  # fala 2 L4 od 03/10 (conventional-commit/parse-duration = W21/W22 na czole)
          "crontab-next", "changelog", "git-diff-stat", "git-log-json",  # fala 2 L5
          "env-lint", "parse-diff",  # fala 2 L6
+         "url-nfc",  # ostatni nieaimplementowany z FEATURES (reszta poza kolejką istnieje na main przez P6)
          "expr-lex", "expr-parse", "expr-eval"]  # pipeline "testy dziennie" P1 (manual trigger)
 
 # Safeguard quota Z.ai (plan E3 krok 4): 5h >= 85% -> skip nocy; weekly >= 90% -> pauza.
