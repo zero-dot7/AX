@@ -795,6 +795,41 @@ FEATURES = {
         ],
     },
 
+    # Sonda regresji (anty-PROMPT_TAIL): aktor musi chirurgicznie rozszerzyc
+    # ISTNIEJACA ~150-liniowa parse_url o default_port, nie przepisac pliku.
+    # Sandbox odpala wszystkie testy repo => kazda regresja = fail PR-gate.
+    # Stary kontrakt pilnuja test_lines ponizej (wywolania 1-arg bez zmian).
+    "parse-url-v2": {
+        "spec_file": "specs/parse-url-v2.md",
+        "branch": "feat/parse-url-v2",
+        "probe_exist": "from lab import parse_url; assert parse_url('https://example.com/a', default_port=443)['port'] == 443",
+        "prompt_core": (
+            "rozszerz ISTNIEJACA funkcje parse_url w tym pliku o opcjonalny "
+            "parametr default_port (sygnatura: def parse_url(url: str, "
+            "default_port=None)); wywolanie 1-arg bez zmian (port None bez "
+            "jawnych :port), jawny :port wygrywa nad default_port, brak jawnego "
+            "=> port = default_port; minimalny diff — NIE przepisuj ani nie "
+            "formatuj innych funkcji, zmien tylko parse_url; wszystkie "
+            "istniejace testy musza nadal przechodzic"
+        ),
+        "test_file": "tests/test_parse_url_v2.py",
+        "test_import": "from lab import parse_url",
+        "test_lines": [
+            "u = parse_url('https://example.com/a')",
+            "assert u['port'] is None and u['host'] == 'example.com', 'old contract: no default'",
+            "assert parse_url('https://example.com/a', default_port=443)['port'] == 443, 'default applied'",
+            "assert parse_url('https://example.com:8080/a', default_port=443)['port'] == 8080, 'explicit wins'",
+            "assert parse_url('http://[::1]/x', default_port=80)['port'] == 80, 'ipv6 default'",
+            "assert parse_url('http://[::1]:8080/x', default_port=80)['port'] == 8080, 'ipv6 explicit wins'",
+            "assert parse_url('https://example.com/a', default_port=None)['port'] is None, 'None keeps old'",
+            "try:",
+            "    parse_url('example.com/a'); raise SystemExit('no ValueError scheme-less')",
+            "except ValueError:",
+            "    pass",
+            "print('ALL SPEC TESTS PASSED')",
+        ],
+    },
+
     "report-aggregate": {
         "spec_file": "specs/report-aggregate.md",
         "branch": "feat/report-aggregate",
