@@ -101,6 +101,7 @@ def run_hidden_tests(feature: str, repo: str = REPO) -> tuple[bool, str]:
         return True, "brak ukrytych testow dla tej featury"
     test_code = "\n".join(["import sys", "sys.path.insert(0, 'src')",
                            FEATURES[feature].get("hidden_import")
+                           or FEATURES[feature].get("test_import")
                            or f"from lab import {feature.replace('-', '_')}",
                            ""] + lines)
     import tempfile
