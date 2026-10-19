@@ -25,9 +25,13 @@ sys.path.insert(0, HERE)
 import config  # noqa: E402  (config.py generated from config.yaml)
 
 SERV2 = "hermes@100.65.215.34"
+# Receiver names files result-<ts>.json (task identity is inside the JSON,
+# under the "task" key) — a {name}-*.json glob silently matched nothing and
+# the ssh fallback then returned stale Sep-29 files. Fetch all result files
+# and filter by task field + ts locally.
 RECEIVER_POLL_CMD = (
     "ssh -o BatchMode=yes " + SERV2 +
-    " 'cat ~/ax-test/data/{name}-*.json 2>/dev/null | tail -1'"
+    " 'cat ~/ax-test/data/result-*.json 2>/dev/null'"
 )
 RUNNER_IMAGE = ("localhost:5001/ax-task-runner@"
                 "sha256:594e20cb3e23a5961cf6c7c9cb40e06e670e43a2172534d17eccbf65f8b1ff94")
@@ -165,24 +169,42 @@ def dispatch(name, manifest, hosts, cidrs):
     return True, out
 
 
+def parse_result_blob(text):
+    """Parse concatenated (pretty-printed) result JSON objects.
+
+    Receiver files are multi-line JSON; `cat result-*.json` concatenates
+    them. Yields objects newest-last-first (files glob chronologically).
+    """
+    dec = json.JSONDecoder()
+    objs = []
+    s = text.strip()
+    idx = 0
+    while idx < len(s):
+        try:
+            obj, end = dec.raw_decode(s, idx)
+            objs.append(obj)
+            idx = end
+        except ValueError:
+            break
+        while idx < len(s) and s[idx] in " \t\r\n":
+            idx += 1
+    return list(reversed(objs))
+
+
 def poll_result(name, timeout=POLL_TIMEOUT, not_before=None):
     if not_before is None:
         not_before = time.time() - 60
     deadline = time.time() + timeout
-    cmd = RECEIVER_POLL_CMD.format(name=name)
+    cmd = RECEIVER_POLL_CMD  # {name} no longer substituted; filter below
     while time.time() < deadline:
         p = subprocess.run(cmd, shell=True, capture_output=True, text=True,
                            timeout=45)
         out = p.stdout.strip()
         if out:
-            try:
-                # tail -1 of potentially several runs; take the newest file content
-                obj = json.loads(out.splitlines()[-1])
+            for obj in parse_result_blob(out):
                 if obj.get("task") == name and \
                         obj.get("ts", 0) > not_before:
-                    return obj
-            except ValueError:
-                pass
+                    return obj  # parse_result_blob yields newest first
         time.sleep(POLL_INTERVAL)
     return None
 
@@ -204,14 +226,13 @@ def save_state(state):
 
 def fetch_result_via_ssh(name):
     """Fallback: read newest result file for `name` directly via ssh cat."""
-    rc, out = ssh(f"ls -t ~/ax-test/data/{name}-*.json 2>/dev/null | head -1")
+    rc, out = ssh("cat ~/ax-test/data/result-*.json 2>/dev/null")
     if rc == 0 and out.strip():
-        rc2, raw = ssh("cat " + out.strip())
-        if rc2 == 0 and raw.strip():
-            try:
-                return json.loads(raw.strip().splitlines()[-1])
-            except ValueError:
-                return None
+        # staleness guard: never accept a result older than 24 h
+        min_ts = time.time() - 86400
+        for obj in parse_result_blob(out):
+            if obj.get("task") == name and obj.get("ts", 0) > min_ts:
+                return obj
     return None
 
 
