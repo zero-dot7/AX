@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Substrate canaries — upstream google/ax regression detectors (non-destructive).
 
-Covers two upstream issues that directly affect our stack:
+Covers upstream google/ax issues that directly affect our stack:
   #443  AX sends removed snapshot_config.on_resume -> Substrate >=6a35150 rejects
         the custom ActorTemplate and AX silently falls back to default template
         (which does not exist on a stock install -> apply fails with a misleading
@@ -13,6 +13,21 @@ Covers two upstream issues that directly affect our stack:
         host redis-server with RDB to /var/lib/redis (not a PVC-less pod), so the
         audit checks: dump.rdb exists + fresh, save schedule sane, AOF status;
         plus a divergence detector: actors without a Task record = orphans.
+  #471  Task budgets (spec.budget: activeDeadline + maxTokens) and status.usage.
+        Upstream DEFERRED (rakyll 2026-10-16: #485 removed UsageStats; budget
+        spec waits for the next Task kind). Feature probe on the deployed ax
+        binary: absence is EXPECTED today (WARN, informational); presence means
+        an upgrade landed and we should verify enforcement E2E.
+  #475  Credentials via egress injection (ate-secret:// URIs, replaceHeaders,
+        SecretStore) — real keys never enter the sandbox. Upstream in design.
+        Feature probe on the deployed controller/kubectl-ate binaries: absence
+        expected (WARN); presence = start migrating secrets off spec.env.
+  #498  Pre-bump guard for the Substrate v0.5.0 ActorTemplate break
+        (sandbox_config field 6 removed, resources required, digest-pinned
+        images). FAILs only if someone bumps ~/substrate past the proto change
+        while our ax build still emits sandbox_config — exactly the state in
+        which every Task apply would start failing with a misleading
+        "actor template not found".
 
 Run from the Hermes host (drives serv2uk over ssh, BatchMode key):
     python3 axbot/tests/live/substrate_canaries.py [--since 24h]
@@ -124,6 +139,90 @@ if stuck:
     warn("#442 tasks stuck Terminating", "%d task(s) holding worker slots: %s" % (len(stuck), "; ".join(l.split()[0] for l in stuck)))
 else:
     check("#442 no tasks stuck Terminating", True)
+
+
+# --- Canary 4 (#471): task budgets / usage — feature probe on ax binaries ------
+# spec.budget{activeDeadline,maxTokens} + status.usage. Deferred upstream after
+# #485; expected absent in our v0.2-era build. Distinctive markers only:
+# "TokenBudgetExceeded" (proposal phase 3) / "activeDeadline". NB maxTokens and
+# secretRef-like generic names already exist via unrelated libs (verified
+# 2026-10-19) and must not be used as markers.
+ax_path = sh("command -v ax").strip().splitlines()
+ax_path = ax_path[0] if ax_path else ""
+
+_ctrl_bin = ""
+def ctrl_bin_path():
+    """Absolute path of the deployed ax-controller binary (systemd ExecStart)."""
+    global _ctrl_bin
+    if not _ctrl_bin:
+        unit = sh("systemctl cat ax-controller 2>/dev/null | grep -E '^ExecStart' | head -1").strip()
+        m = re.search(r"ExecStart=\S*?(/[\w/.-]*(?:controller|ax)[\w/.-]*)", unit)
+        _ctrl_bin = m.group(1) if m else ""
+    return _ctrl_bin
+
+def binary_grep(path, pattern):
+    """grep -a count of pattern in a binary file on the remote host."""
+    if not path:
+        return -1
+    # NB: pattern contains '|'; sh() only quotes whitespace, so shell-quote
+    # both args ourselves or bash pipelines the grep apart.
+    q = lambda s: "'" + s.replace("'", "'\\''") + "'"
+    out = sh("grep -a -c -E %s %s" % (q(pattern), q(path))).strip()
+    m = re.match(r"^(\d+)$", out)
+    return int(m.group(1)) if m else -1
+
+budget_hits = max(binary_grep(ax_path, "TokenBudgetExceeded|activeDeadline"),
+                  binary_grep(ctrl_bin_path(), "TokenBudgetExceeded|activeDeadline"))
+# NB: "DeadlineExceeded" deliberately excluded — stock grpc/codes string in every
+# Go binary. "maxTokens" excluded — pre-existing unrelated lib hit (2026-10-19).
+if budget_hits < 0:
+    warn("#471 budget probe inconclusive", "ax/ax-controller binaries not found")
+elif budget_hits == 0:
+    warn("#471 spec.budget not in deployed ax", "expected: deferred upstream after #485; revisit on next ax bump (issue #471)")
+else:
+    check("#471 spec.budget present in ax build", True,
+          "%d grep hits — verify enforcement E2E (deadline stop, usage in status) before relying on it" % budget_hits)
+
+# --- Canary 5 (#475): egress credential injection — feature probe --------------
+# Substrate side: ate-secret:// credentialUri + replaceHeaders in egress policy;
+# AX side: SecretStore resource. Upstream in design. Markers chosen so that
+# today's build greps 0 (generic "credentialUri"/"secretRef" fields already
+# exist in substrate via unrelated features — verified 2026-10-19).
+kt_path = sh("command -v kubectl-ate").strip().splitlines()
+kt_path = kt_path[0] if kt_path else ""
+cred_marks = "ate-secret://|replaceHeaders|SecretStore"
+cred_hits = max(binary_grep(ctrl_bin_path(), cred_marks),
+                binary_grep(kt_path, cred_marks),
+                binary_grep(ax_path, cred_marks))
+if cred_hits == 0:
+    warn("#475 egress credential injection absent", "expected: design-stage upstream (generic credentialUri field in substrate predates #475); secrets still in task env — keep axbot digest pin + env hygiene")
+elif cred_hits < 0:
+    warn("#475 credential probe inconclusive", "controller/kubectl-ate binaries not locatable")
+else:
+    check("#475 credential injection present in deployed stack", True,
+          "start migrating keys off spec.env to SecretStore + egress replaceHeaders (issue #475, cf. giantswarm/substrate-credential-providers)")
+
+# --- Canary 6 (#498): pre-bump guard — Substrate v0.5.0 ActorTemplate break ----
+# Break condition: ~/substrate proto no longer declares sandbox_config while the
+# deployed ax-controller still emits it. NB the ax CLI carries no sandboxConfig
+# strings (verified 2026-10-19) — the controller builds the ActorTemplate, so it
+# is the binary to watch. v0.5.0 release itself still HAS the field (#484); the
+# removal lands in substrate >=3d3b929.
+sub_ver = sh("git -C $HOME/substrate describe --tags --always 2>/dev/null").strip() or "unknown"
+proto_has_sc = sh("grep -c sandbox_config $HOME/substrate/pkg/proto/ateapipb/ateapi.proto 2>/dev/null").strip()
+proto_has_sc = bool(re.match(r"^[1-9]\d*$", proto_has_sc))
+ax_has_sc = binary_grep(ctrl_bin_path(), "andbox_config|andboxConfig") > 0
+digest_ok = binary_grep(ctrl_bin_path(), "@sha256:")
+
+if not proto_has_sc:
+    if ax_has_sc:
+        check("#498 substrate/ax ActorTemplate compatibility", False,
+              "substrate %s dropped sandbox_config but ax-controller still emits it — EVERY task apply will fail (#498); halt: drop SandboxConfig, set Resources, digest-pin images (cf. gethamster/ax 43fd8d5)" % sub_ver)
+    else:
+        warn("#498 substrate past ActorTemplate break", "substrate %s dropped sandbox_config; ax-controller no longer emits it — confirm digest-pinned runner image before resuming" % sub_ver)
+else:
+    check("#498 substrate pre-v0.5 ActorTemplate break (sandbox_config intact)", True,
+          "substrate %s; controller%s emits sandboxConfig; digest-pinned image refs in controller: %s" % (sub_ver, "" if ax_has_sc else " does not", digest_ok if digest_ok >= 0 else "?"))
 
 print()
 print("substrate canaries: %d fail, %d warn" % (len(FAILS), len(WARNS)))
