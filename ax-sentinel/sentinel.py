@@ -37,6 +37,16 @@ RUNNER_IMAGE = ("localhost:5001/ax-task-runner@"
                 "sha256:594e20cb3e23a5961cf6c7c9cb40e06e670e43a2172534d17eccbf65f8b1ff94")
 POLL_INTERVAL = 20
 POLL_TIMEOUT = 5400  # 90 min per task — generous buffer: pip install ~15 min, sandbox init varies; wall clock cost irrelevant for a daily 05:45 cron
+# Known substrate race: on a FRESH workspace the init can hang forever —
+# task Running, WorkspaceReady=False/WorkspaceInitializing, zero actor log
+# lines. suspend → sleep → resume re-runs the workspace init, preserves the
+# egress-policy, and the command then completes normally (verified 2026-10-23:
+# 2 hangs same morning, both recovered this way). Results normally land <60 s,
+# so no result by HANG_CHECK_AT strongly suggests the hang; the WorkspaceInitializing
+# condition guard makes the recovery a no-op for a task that is legitimately
+# still running (pip install etc.) — we never suspend a ready workspace.
+HANG_CHECK_AT = 600   # s without result → probe task conditions (1st attempt)
+HANG_RETRY_AT = 1800  # 2nd attempt if still nothing at 30 min
 
 
 def ssh(cmd, timeout=90):
@@ -191,10 +201,27 @@ def parse_result_blob(text):
     return list(reversed(objs))
 
 
+def recover_hung_init(name):
+    """Recover the fresh-workspace init hang: only acts while the task still
+    reports WorkspaceInitializing; never touches a ready/running workspace."""
+    rc, out = ssh(f"ax get task {name} 2>/dev/null")
+    if rc != 0 or "WorkspaceInitializing" not in out:
+        return False
+    ssh(f"ax suspend task {name}")
+    time.sleep(8)
+    ssh(f"ax resume task {name}")
+    with open(os.path.join(HERE, "out", "hang-recovery.log"), "a") as f:
+        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {name}: "
+                "workspace-init hang -> suspend/resume\n")
+    return True
+
+
 def poll_result(name, timeout=POLL_TIMEOUT, not_before=None):
     if not_before is None:
         not_before = time.time() - 60
     deadline = time.time() + timeout
+    start = time.time()
+    hang_checks = [HANG_CHECK_AT, HANG_RETRY_AT]
     cmd = RECEIVER_POLL_CMD  # {name} no longer substituted; filter below
     while time.time() < deadline:
         p = subprocess.run(cmd, shell=True, capture_output=True, text=True,
@@ -205,6 +232,9 @@ def poll_result(name, timeout=POLL_TIMEOUT, not_before=None):
                 if obj.get("task") == name and \
                         obj.get("ts", 0) > not_before:
                     return obj  # parse_result_blob yields newest first
+        while hang_checks and time.time() - start > hang_checks[0]:
+            hang_checks.pop(0)
+            recover_hung_init(name)
         time.sleep(POLL_INTERVAL)
     return None
 

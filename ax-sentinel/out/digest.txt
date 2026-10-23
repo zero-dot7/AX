@@ -5,8 +5,8 @@
   offline tests: 21/21 (rc=0)
   secret scan: CLEAN
 ▪ 🧬 sentinel-upstream: OK
-  upstream google/ax main @ ac2332829
-  known: ac2332829 → behind by 0 commits
+  upstream google/ax main @ 0f085aa06
+  known: 0f085aa06 → behind by 0 commits
   no new tags
 
-tasks ok: 2/2 · wall 10838s · 2026-10-09 08:46 UTC
+tasks ok: 2/2 · wall 292s · 2026-10-23 07:38 UTC
