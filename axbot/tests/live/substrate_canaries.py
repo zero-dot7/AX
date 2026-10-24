@@ -99,11 +99,18 @@ dump = sh("sudo -n ls -la /var/lib/redis/dump.rdb")
 check("#442 RDB snapshot present on disk", "dump.rdb" in dump, dump.strip())
 check("#442 rdb_last_bgsave_status ok", bool(rdb_status) and rdb_status.group(1) == "ok",
       rdb_status.group(1) if rdb_status else "missing")
+changes = re.search(r"^rdb_changes_since_last_save:(\d+)", info, re.M)
 if last_save:
     age_h = (time.time() - int(last_save.group(1))) / 3600
     # save schedule default saves at least hourly under load; a file much older
-    # than the save window means state changes would be lost on restart
-    check("#442 dump.rdb freshness (<2h)", age_h < 2, "last save %.1fh ago" % age_h)
+    # than the save window means state changes would be lost on restart.
+    # Idle exception: 0 unpersisted changes means on-disk RDB is already
+    # current, so an old timestamp loses no state (false-positive guard).
+    if changes and changes.group(1) == "0":
+        check("#442 dump.rdb freshness (<2h)", True,
+              "last save %.1fh ago but 0 changes since — RDB current (idle)" % age_h)
+    else:
+        check("#442 dump.rdb freshness (<2h)", age_h < 2, "last save %.1fh ago" % age_h)
 else:
     check("#442 dump.rdb freshness (<2h)", False, "rdb_last_save_time missing")
 if aof:
