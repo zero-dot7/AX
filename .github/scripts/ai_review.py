@@ -10,7 +10,12 @@ Posts one comment per PR (updated in place), writes step summary.
 Exit 1 on any CRITICAL finding (blocking check), unless REVIEW_BLOCK=never.
 Fails open: if the API is unavailable, posts a notice and exits 0.
 """
-import json, os, re, subprocess, sys, urllib.request
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.request
 
 API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
 REPO = os.environ["GITHUB_REPOSITORY"]
@@ -80,7 +85,7 @@ def call_model(prompt, system, models):
 
 
 def extract_json(text):
-    text = re.sub(r"^```(json)?|```$", "", text.strip(), flags=re.M).strip()
+    text = re.sub(r"^```(json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
     start = text.find("{")
     depth = 0
     for i, ch in enumerate(text[start:], start):
@@ -112,7 +117,7 @@ def main():
     intent = f"Title: {pr['title']}\n\nBody:\n{cap(pr.get('body') or '(none)', 4000)}"
 
     # repo context: file tree + full current content of changed files
-    tree = subprocess.run(["git", "ls-files"], capture_output=True, text=True).stdout
+    tree = subprocess.run(["git", "ls-files"], capture_output=True, text=True, check=False).stdout
     files = [f for f in tree.splitlines() if f and "node_modules" not in f][:3000]
     changed = json.loads(gh(f"/repos/{REPO}/pulls/{PR}/files?per_page=100"))
     touched = [f["filename"] for f in changed]
@@ -121,7 +126,8 @@ def main():
         if not os.path.isfile(f) or f.endswith((".png", ".jpg", ".webp", ".ico")):
             continue
         try:
-            content = open(f, encoding="utf-8", errors="replace").read()
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                content = fh.read()
         except OSError:
             continue
         content = cap(content, FILE_CAP)
@@ -185,7 +191,7 @@ def main():
                   '"reasons": {"1": "false positive, bo ..."}} '
                   "(indeksy listy findings).")
         try:
-            mv, out = call_model(prompt, system, models)
+            _mv, out = call_model(prompt, system, models)
             v = extract_json(out)
             keep = set(v.get("keep", []))
             new = []
